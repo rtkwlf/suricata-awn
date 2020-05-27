@@ -872,6 +872,8 @@ static TmEcode ReceiveNetmapLoop(ThreadVars *tv, void *data, void *slot)
     fds.events = POLLIN;
 
     SCLogDebug("thread %s polling on %d", tv->name, fds.fd);
+    TmThreadsSetFlag(tv, THV_RUNNING);
+
     for(;;) {
         if (unlikely(suricata_ctl_flags != 0)) {
             break;

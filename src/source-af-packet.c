@@ -1399,8 +1399,8 @@ TmEcode ReceiveAFPLoop(ThreadVars *tv, void *data, void *slot)
          * us from alloc'ing packets at line rate */
         PacketPoolWait();
 
-        StatsIncr(ptv->tv, ptv->capture_afp_poll);
-
+        // Indicate that the thread is actually running its application level code (i.e., it can poll packets)
+        TmThreadsSetFlag(tv, THV_RUNNING);
         r = poll(&fds, 1, POLL_TIMEOUT);
 
         if (suricata_ctl_flags != 0) {

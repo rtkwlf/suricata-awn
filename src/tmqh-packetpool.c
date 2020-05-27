@@ -297,6 +297,7 @@ void PacketPoolDestroy(void)
 
 Packet *TmqhInputPacketpool(ThreadVars *tv)
 {
+    TmThreadsSetFlag(tv, THV_RUNNING);
     return PacketPoolGetPacket();
 }
 

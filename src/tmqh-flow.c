@@ -32,6 +32,7 @@
 #include "decode.h"
 #include "threads.h"
 #include "threadvars.h"
+#include "tm-threads.h"
 #include "tmqh-flow.h"
 #include "flow-hash.h"
 
@@ -103,6 +104,8 @@ Packet *TmqhInputFlow(ThreadVars *tv)
 
     StatsSyncCountersIfSignalled(tv);
 
+    TmThreadsSetFlag(tv, THV_RUNNING);
+    
     SCMutexLock(&q->mutex_q);
     if (q->len == 0) {
         /* if we have no packets in queue, wait... */

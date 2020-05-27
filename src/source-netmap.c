@@ -804,6 +804,7 @@ static TmEcode ReceiveNetmapLoop(ThreadVars *tv, void *data, void *slot)
     // packets)
     TmThreadsSetFlag(tv, THV_RUNNING);
 
+    /* loop waiting for packets to arrive on the netmap source RX ring */
     for(;;) {
         if (unlikely(suricata_ctl_flags != 0)) {
             break;

@@ -763,9 +763,11 @@ static TcpSession *StreamTcpNewSession(ThreadVars *tv, StreamTcpThread *stt, Pac
 
         if (PKT_IS_TOSERVER(p)) {
             ssn->client.tcp_flags = p->tcph ? p->tcph->th_flags : 0;
+            ssn->client.tcp_init_flags = p->tcph->th_flags;
             ssn->server.tcp_flags = 0;
         } else if (PKT_IS_TOCLIENT(p)) {
             ssn->server.tcp_flags = p->tcph ? p->tcph->th_flags : 0;
+            ssn->server.tcp_init_flags = p->tcph->th_flags;
             ssn->client.tcp_flags = 0;
         }
     }
@@ -949,9 +951,30 @@ static int StreamTcpPacketStateNone(
         ThreadVars *tv, Packet *p, StreamTcpThread *stt, TcpSession *ssn)
 {
     if (p->tcph->th_flags & TH_RST) {
-        StreamTcpSetEvent(p, STREAM_RST_BUT_NO_SESSION);
-        SCLogDebug("RST packet received, no session setup");
-        return -1;
+        if (stream_config.midstream == FALSE) {
+            StreamTcpSetEvent(p, STREAM_RST_BUT_NO_SESSION);
+            SCLogDebug("RST packet received, no session setup");
+            return -1;
+        }
+        ssn = StreamTcpNewSession(p, stt->ssn_pool_id);
+        if (ssn == NULL) {
+            StatsIncr(tv, stt->counter_tcp_ssn_memcap);
+            return -1;
+        }
+        StatsIncr(tv, stt->counter_tcp_sessions);
+        StatsIncr(tv, stt->counter_tcp_midstream_pickups);
+
+        ssn->flags |= STREAMTCP_FLAG_MIDSTREAM;
+
+        if (PKT_IS_TOSERVER(p)) {
+            ssn->server.flags |= STREAMTCP_STREAM_FLAG_RST_RECV;
+            SCLogDebug("ssn->server.flags |= STREAMTCP_STREAM_FLAG_RST_RECV");
+        } else {
+            ssn->client.flags |= STREAMTCP_STREAM_FLAG_RST_RECV;
+            SCLogDebug("ssn->client.flags |= STREAMTCP_STREAM_FLAG_RST_RECV");
+        }
+        StreamTcpPacketSetState(p, ssn, TCP_CLOSED);
+        SCLogDebug("ssn %p: =~ midstream picked ssn state is now TCP_CLOSED", ssn);
 
     } else if (p->tcph->th_flags & TH_FIN) {
         /* Drop reason will only be used if midstream policy is set to fail closed */
@@ -5331,10 +5354,15 @@ int StreamTcpPacket (ThreadVars *tv, Packet *p, StreamTcpThread *stt,
     /* track TCP flags */
     if (ssn != NULL) {
         ssn->tcp_packet_flags |= p->tcph->th_flags;
-        if (PKT_IS_TOSERVER(p))
+        if (PKT_IS_TOSERVER(p)) {
             ssn->client.tcp_flags |= p->tcph->th_flags;
-        else if (PKT_IS_TOCLIENT(p))
+            if (unlikely(ssn->client.tcp_init_flags == 0))
+                ssn->client.tcp_init_flags = p->tcph->th_flags;
+        } else if (PKT_IS_TOCLIENT(p)) {
             ssn->server.tcp_flags |= p->tcph->th_flags;
+            if (unlikely(ssn->server.tcp_init_flags == 0))
+                ssn->server.tcp_init_flags = p->tcph->th_flags;
+        }
 
         /* check if we need to unset the ASYNC flag */
         if (ssn->flags & STREAMTCP_FLAG_ASYNC &&

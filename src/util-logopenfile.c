@@ -49,6 +49,8 @@
 
 static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, const char *append,
         ThreadLogFileHashEntry *entry);
+static bool LogSocketNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, const char *append, 
+        ThreadLogFileHashEntry *entry);
 
 // Threaded eve.json identifier
 static SC_ATOMIC_DECL_AND_INIT_WITH_VAL(uint32_t, eve_file_id, 1);
@@ -576,7 +578,13 @@ SCConfLogOpenGeneric(ConfNode *conf,
         /* Don't bail. May be able to connect later. */
         log_ctx->is_sock = 1;
         log_ctx->sock_type = SOCK_DGRAM;
-        log_ctx->fp = SCLogOpenUnixSocketFp(log_path, SOCK_DGRAM, 1);
+        if (!log_ctx->threaded) {
+            log_ctx->fp = SCLogOpenUnixSocketFp(log_path, SOCK_DGRAM, 1);
+        } else {
+            if (!SCLogOpenThreadedFileFp(log_path, append, log_ctx, 1)) {
+                return -1;
+            }
+        }
 #else
         return -1;
 #endif
@@ -722,6 +730,9 @@ LogFileCtx *LogFileEnsureExists(LogFileCtx *parent_ctx)
     if (!entry->isopen) {
         SCLogDebug("Opening new file for thread/slot %d to file %s [ctx %p]", entry->slot_number,
                 parent_ctx->filename, parent_ctx);
+	// JJW: TODO: ensure we can merge in our LogSocketNewThreadedCtx in here somehow
+	// Using parent_ctx->is_sock was used before; can we still use it?
+	// https://github.com/rtkwlf/suricata-awn/commit/900aa55a579ad33963cb4571033ff6f574fd2c18#diff-13056eea09c404ce578d0de91c46908485065b321a1246a1334a74d9fe275a42R689
         if (LogFileNewThreadedCtx(
                     parent_ctx, parent_ctx->filename, parent_ctx->threads->append, entry)) {
             entry->isopen = true;
@@ -802,6 +813,7 @@ static bool LogFileThreadedName(
 static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, const char *append,
         ThreadLogFileHashEntry *entry)
 {
+    assert(!parent_ctx->is_sock);
     LogFileCtx *thread = SCCalloc(1, sizeof(LogFileCtx));
     if (!thread) {
         SCLogError("Unable to allocate thread file context entry %p", entry);
@@ -854,6 +866,67 @@ error:
     }
     return false;
 }
+
+/** \brief LogSocketNewThreadedCtx() Create socket context for threaded output
+ * \param parent_ctx
+ * \param log_path
+ * \param append
+ * \param thread_id
+ */
+// JJW: TODO: this wont compile -> last param is new, and structs are different
+#if 0
+static bool LogSocketNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, const char *append, 
+		ThreadLogFileHashEntry *entry)
+{
+    LogFileCtx *thread = SCCalloc(1, sizeof(LogFileCtx));
+    if (!thread) {
+        SCLogError(SC_ERR_MEM_ALLOC, "Unable to allocate thread file context slot %d", thread_id);
+        return false;
+    }
+
+    *thread = *parent_ctx;
+    char fname[NAME_MAX];
+    uint32_t unique_id = SC_ATOMIC_ADD(eve_file_id, 1);
+    if (!LogFileThreadedName(log_path, fname, sizeof(fname), unique_id)) {
+        SCLogError(SC_ERR_MEM_ALLOC, "Unable to create threaded filename for log (%s, %u)", log_path, unique_id);
+        goto error;
+    }
+    SCLogDebug("Thread open -- using name %s [replaces %s]", fname, log_path);
+    thread->fp = SCLogOpenUnixSocketFp(fname, parent_ctx->sock_type, 1);
+    if (thread->fp == NULL) {
+        /* error is logged by SCLogOpenUnixSocketFp; we will attempt to retry opening the socket later */
+        goto error;
+    }
+    thread->filename = SCStrdup(fname);
+    if (!thread->filename) {
+        SCLogError(SC_ERR_MEM_ALLOC, "Unable to duplicate filename for context slot %d", thread_id);
+        goto error;
+    }
+
+    thread->threaded = false;
+    thread->parent = parent_ctx;
+    thread->id = thread_id;
+    thread->is_regular = true;
+    thread->Write = SCLogFileWriteSocket;
+    thread->Close = SCLogFileCloseNoLock;
+    OutputRegisterFileRotationFlag(&thread->rotation_flag);
+
+    parent_ctx->threads->lf_slots[thread_id] = thread;
+    return true;
+
+error:
+    SC_ATOMIC_SUB(eve_file_id, 1);
+    if (thread->fp) {
+        thread->Close(thread);
+    }
+    if (thread) {
+        SCFree(thread);
+    }
+    parent_ctx->threads->lf_slots[thread_id] = NULL;
+    return false;
+}
+#endif
+
 
 /** \brief LogFileFreeCtx() Destroy a LogFileCtx (Close the file and free memory)
  *  \param lf_ctx pointer to the OutputCtx

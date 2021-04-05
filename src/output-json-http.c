@@ -647,6 +647,14 @@ static OutputInitResult OutputHttpLogInitSub(ConfNode *conf, OutputCtx *parent_c
                 }
             }
         }
+
+        FileForceHashParseCfg(conf);
+
+        const char *force_magic = ConfNodeLookupChildValue(conf, "force-magic");
+        if (force_magic != NULL && ConfValIsTrue(force_magic)) {
+            FileForceMagicEnable();
+            SCLogInfo("forcing magic lookup for logged files");
+        }	
     }
 
     if (conf != NULL && ConfNodeLookupChild(conf, "xff") != NULL) {

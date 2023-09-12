@@ -452,8 +452,8 @@
             AS_IF([test "$CLANG" != no],
                   [
                     llc_candidates=$($CLANG --version | \
-                      awk '/^clang version/ {
-                             split($3, v, ".");
+                      awk '/^Ubuntu clang version/ {
+                             split($4, v, ".");
                              printf("llc-%s.%s llc-%s llc", v[[1]], v[[2]], v[[1]])
                            }')
                     AC_CHECK_PROGS([LLC], [$llc_candidates], "no")

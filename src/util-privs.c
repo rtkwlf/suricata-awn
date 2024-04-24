@@ -66,15 +66,18 @@ void SCDropMainThreadCaps(uint32_t userid, uint32_t groupid)
                     CAP_NET_RAW,            /* needed for pcap live mode */
                     CAP_SYS_NICE,
                     CAP_NET_ADMIN,
+		    CAP_SYS_RESOURCE, // JJW
                     -1);
             break;
         case RUNMODE_PFRING:
+	    abort(); // JJW
             capng_updatev(CAPNG_ADD, CAPNG_EFFECTIVE|CAPNG_PERMITTED,
                     CAP_NET_ADMIN, CAP_NET_RAW, CAP_SYS_NICE,
                     -1);
             break;
         case RUNMODE_NFLOG:
         case RUNMODE_NFQ:
+	    abort();
             capng_updatev(CAPNG_ADD, CAPNG_EFFECTIVE|CAPNG_PERMITTED,
                     CAP_NET_ADMIN,          /* needed for nflog and nfqueue inline mode */
                     CAP_SYS_NICE,
@@ -89,7 +92,7 @@ void SCDropMainThreadCaps(uint32_t userid, uint32_t groupid)
                    " failed");
     }
 
-    SCLogInfo("dropped the caps for main thread");
+    SCLogInfo("JJW dropped the caps for main thread");
 }
 
 void SCDropCaps(ThreadVars *tv)

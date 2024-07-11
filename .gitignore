@@ -8,7 +8,9 @@
 *.rules
 *.pcap
 *.pcapng
-/*.yaml
+*.so
+*.so.[0-9]*
+/suricata.yaml
 Makefile
 .deps/
 .libs/
@@ -26,8 +28,11 @@ config.log
 config.status
 config.sub
 configure
+debian/
 depcomp
 doc/userguide/suricata.1
+ebpf/*.bpf
+ebpf/test
 etc/suricata.logrotate
 etc/suricata.service
 install-sh

@@ -1943,7 +1943,7 @@ void TmThreadContinueThreads(void)
     SCMutexUnlock(&tv_root_lock);
     return;
 }
-
+// JJW: these two can probably be removed?
 void TmThreadEnsureUnpaused()
 {
     ThreadVars *tv = NULL;

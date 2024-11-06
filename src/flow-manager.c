@@ -195,7 +195,7 @@ int FlowShouldPeriodicLog(const Flow *f)
         uint32_t maxDuration = flow_timeouts[f->protomap].active;
         if (maxDuration > 0)
         {
-            const uint32_t duration = f->lastts.tv_sec - f->startts.tv_sec;
+            const uint32_t duration = f->lastts.secs - f->startts.secs;
             if (duration > maxDuration)
             {
                 return 1;

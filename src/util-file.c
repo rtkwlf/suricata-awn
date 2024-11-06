@@ -94,6 +94,7 @@ static uint32_t g_file_store_reassembly_depth = 0;
 /* prototypes */
 static void FileFree(File *, const StreamingBufferConfig *cfg);
 static void FileEndSha256(File *ff);
+static inline uint32_t HashLengthHelper(uint32_t data_len, uint64_t *bytes_hashed);
 
 void FileForceFilestoreEnable(void)
 {
@@ -243,7 +244,7 @@ void FileForceHashParseCfg(ConfNode *conf)
         if (ConfGetChildValue(conf, "hash-byte-limit", &conf_val) == 1) {
             uint64_t value;
             if (ParseSizeStringU64(conf_val, &value) < 0) {
-                SCLogError(SC_ERR_SIZE_PARSE, "Error parsing hash-byte-limit "
+                SCLogError("Error parsing hash-byte-limit "
                            "from conf file - %s.  Killing engine",
                            conf_val);
                 exit(EXIT_FAILURE);
@@ -340,7 +341,9 @@ static int FileMagicSize(void)
     return 512;
 }
 
-#ifdef HAVE_NSS
+// JJW: seems like this isn't defined, so we shouldn't use it...
+//#ifdef HAVE_NSS
+/*
 static void HashUpdate(HASHContext *ctx, const uint8_t *data, uint32_t data_len, uint64_t *bytes_hashed) {
     if (g_hash_byte_limit > 0) {
         uint64_t bytes_remaining = g_hash_byte_limit - *bytes_hashed;
@@ -351,7 +354,20 @@ static void HashUpdate(HASHContext *ctx, const uint8_t *data, uint32_t data_len,
     HASH_Update(ctx, data, data_len);
     *bytes_hashed += data_len;
 }
-#endif
+*/
+// Returns the number of bytes to hash, keeping the hash byte limit in mind.
+static inline uint32_t HashLengthHelper(uint32_t data_len, uint64_t *bytes_hashed) {
+    if (g_hash_byte_limit > 0) {
+        uint64_t bytes_remaining = g_hash_byte_limit - *bytes_hashed;
+        if (data_len > bytes_remaining) {
+            data_len = bytes_remaining;
+        }
+    }
+    
+    *bytes_hashed += data_len;
+    return data_len;
+}
+//#endif
 
 /**
  *  \brief get the size of the file data
@@ -707,14 +723,14 @@ static int AppendData(
     }
 
     if (file->md5_ctx) {
-        SCMd5Update(file->md5_ctx, data, data_len, &file->md5_num_bytes);
+        SCMd5Update(file->md5_ctx, data, HashLengthHelper(data_len, &file->md5_num_bytes));
     }
     if (file->sha1_ctx) {
-        SCSha1Update(file->sha1_ctx, data, data_len, &file->sha1_num_bytes);
+        SCSha1Update(file->sha1_ctx, data, HashLengthHelper(data_len, &file->sha1_num_bytes));
     }
     if (file->sha256_ctx) {
         SCLogDebug("SHA256 file %p data %p data_len %u", file, data, data_len);
-        SCSha256Update(file->sha256_ctx, data, data_len, &file->sha256_num_bytes);
+        SCSha256Update(file->sha256_ctx, data, HashLengthHelper(data_len, &file->sha256_num_bytes));
     } else {
         SCLogDebug("NO SHA256 file %p data %p data_len %u", file, data, data_len);
     }
@@ -768,16 +784,16 @@ static int FileAppendDataDo(
         int hash_done = 0;
         /* no storage but forced hashing */
         if (ff->md5_ctx) {
-            SCMd5Update(ff->md5_ctx, data, data_len, &ff->md5_num_bytes);
+            SCMd5Update(ff->md5_ctx, data, HashLengthHelper(data_len, &ff->md5_num_bytes));
             hash_done = 1;
         }
         if (ff->sha1_ctx) {
-            SCSha1Update(ff->sha1_ctx, data, data_len, &ff->sha1_num_bytes);
+            SCSha1Update(ff->sha1_ctx, data, HashLengthHelper(data_len, &ff->sha1_num_bytes));
             hash_done = 1;
         }
         if (ff->sha256_ctx) {
             SCLogDebug("file %p data %p data_len %u", ff, data, data_len);
-            SCSha256Update(ff->sha256_ctx, data, data_len, &ff->sha256_num_bytes);
+            SCSha256Update(ff->sha256_ctx, data, HashLengthHelper(data_len, &ff->sha256_num_bytes));
             hash_done = 1;
         }
 
@@ -1048,12 +1064,12 @@ int FileCloseFilePtr(File *ff, const StreamingBufferConfig *sbcfg, const uint8_t
         if (ff->flags & FILE_NOSTORE) {
             /* no storage but hashing */
             if (ff->md5_ctx)
-                SCMd5Update(ff->md5_ctx, data, data_len, &ff->md5_num_bytes);
+                SCMd5Update(ff->md5_ctx, data, HashLengthHelper(data_len, &ff->md5_num_bytes));
             if (ff->sha1_ctx)
-                SCSha1Update(ff->sha1_ctx, data, data_len, &ff->sha1_num_bytes);
+                SCSha1Update(ff->sha1_ctx, data, HashLengthHelper(data_len, &ff->sha1_num_bytes));
             if (ff->sha256_ctx) {
                 SCLogDebug("file %p data %p data_len %u", ff, data, data_len);
-                SCSha256Update(ff->sha256_ctx, data, data_len, &ff->sha256_num_bytes);
+                SCSha256Update(ff->sha256_ctx, data, HashLengthHelper(data_len, &ff->sha256_num_bytes));
             }
         } else {
             if (AppendData(sbcfg, ff, data, data_len) != 0) {

@@ -445,6 +445,8 @@ static void JsonHttpLogJSONAWN(JsonBuilder *js, htp_tx_t *tx, Flow *f, uint64_t 
     if(!jb_open_object(js, "payload")) {
         return;
     }
+    // JJW: TODO: this doesn't compile in suricata 7.0
+#if 0
     /* We're currently interested in files sent from the server */
     FileContainer *ffc = AppLayerParserGetFiles(f, STREAM_TOCLIENT);
     File *ff = NULL;
@@ -497,6 +499,7 @@ static void JsonHttpLogJSONAWN(JsonBuilder *js, htp_tx_t *tx, Flow *f, uint64_t 
 
         }
     }
+#endif
     jb_close(js);
 }
 

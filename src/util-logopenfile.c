@@ -580,11 +580,14 @@ SCConfLogOpenGeneric(ConfNode *conf,
         log_ctx->sock_type = SOCK_DGRAM;
         if (!log_ctx->threaded) {
             log_ctx->fp = SCLogOpenUnixSocketFp(log_path, SOCK_DGRAM, 1);
-        } else {
+        } /* JJW: TODO: need to fix this.  
+	     Also note that threaded will always be false at this point, as per the 
+	     FatalError above.
+	    else {
             if (!SCLogOpenThreadedFileFp(log_path, append, log_ctx, 1)) {
                 return -1;
             }
-        }
+        } */
 #else
         return -1;
 #endif

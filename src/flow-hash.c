@@ -841,9 +841,10 @@ static Flow *FlowDoPeriodicLog(ThreadVars *tv,
     /* AWN REVISIT: FlowManagerHashRowTimeout() also doesn't timeout a flow if:
      * !FlowBypassedTimeout(f, ts, counters)
      */
-    if (old_f->use_cnt > 0) {
-        return old_f;
-    }
+    // JJW: See 7951d8a14f1842b612e2871d8ee35ce4bd425521
+    //if (old_f->use_cnt > 0) {
+    //    return old_f;
+    //}
 
     /* Get a new flow. It will be either a locked flow or NULL */
     Flow* new_f = FlowGetNew(tv, fls, /* cast away const: */ (Packet *)p);

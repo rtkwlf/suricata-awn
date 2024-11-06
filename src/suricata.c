@@ -3040,8 +3040,9 @@ int SuricataMain(int argc, char **argv)
 
     /* Un-pause all the paused threads, and wait for them to start */
     TmThreadContinueThreads();
-    TmThreadEnsureUnpaused();
-    TmThreadEnsureRunning();
+    // JJW: remove?  May need to refactor our change
+    //TmThreadEnsureUnpaused();
+    //TmThreadEnsureRunning();
 
     /* Must ensure all threads are fully operational before continuing with init process */
     if (TmThreadWaitOnThreadRunning() != TM_ECODE_OK) {

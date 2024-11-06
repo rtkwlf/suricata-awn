@@ -119,12 +119,17 @@ void OutputFileLogFfc(ThreadVars *tv, OutputFileLoggerThreadData *op_thread_data
 
         if (file_trunc && ff->state < FILE_STATE_CLOSED) {
             SCLogDebug("file_trunc %d ff->state %u => FILE_STATE_TRUNCATED", file_trunc, ff->state);
-            FileCloseFilePtr(ff, NULL, 0, FILE_TRUNCATED);
+	    ff->state = FILE_STATE_TRUNCATED;
+	    // JJW: TODO: need to do this, but I'm missing the second param
+	    // const StreamingBufferConfig *sbcfg
+            //FileCloseFilePtr(ff, NULL, 0, FILE_TRUNCATED);
 	}
 
         if (file_close && ff->state < FILE_STATE_CLOSED) {
             SCLogDebug("file_close %d ff->state %u => FILE_STATE_TRUNCATED", file_close, ff->state);
-	    FileCloseFilePtr(ff, NULL, 0, FILE_TRUNCATED);
+	    ff->state = FILE_STATE_TRUNCATED;
+	    // JJW: TODO (see above)
+	    // FileCloseFilePtr(ff, NULL, 0, FILE_TRUNCATED);
         }
 
         SCLogDebug("ff %p state %u", ff, ff->state);

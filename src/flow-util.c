@@ -244,6 +244,8 @@ void FlowInit(Flow *f, const Packet *p)
     SCReturn;
 }
 
+// JJW: TODO: confirm (I believe this is our method) that changes made 
+// to FlowInit are also made below...
 void FlowInitFromFlow(Flow* f, const Flow* old_f, const Packet* p) {
     SCEnter();
     SCLogDebug("flow %p old_flow", f, old_f);
@@ -285,15 +287,17 @@ void FlowInitFromFlow(Flow* f, const Flow* old_f, const Packet* p) {
         f->flags |= FLOW_IPV6;
     }    
 
-    COPY_TIMESTAMP(&p->ts, &f->startts);
+    //COPY_TIMESTAMP(&p->ts, &f->startts);
+    f->startts = p->ts;
 
 
     f->protomap = FlowGetProtoMapping(f->proto);
     f->timeout_policy = FlowGetTimeoutPolicy(f);
-    const uint32_t timeout_at = (uint32_t)f->startts.tv_sec + f->timeout_policy;
+    const uint32_t timeout_at = (uint32_t)f->startts.secs + f->timeout_policy;
     f->timeout_at = timeout_at;
 
     if (MacSetFlowStorageEnabled()) {
+	/*
         MacSet *ms = FlowGetStorageById(f, MacSetGetFlowStorageID());
         if (ms != NULL) {
             MacSetReset(ms);
@@ -301,6 +305,10 @@ void FlowInitFromFlow(Flow* f, const Flow* old_f, const Packet* p) {
             ms = MacSetInit(10);
             FlowSetStorageById(f, MacSetGetFlowStorageID(), ms);
         }
+	*/
+        DEBUG_VALIDATE_BUG_ON(FlowGetStorageById(f, MacSetGetFlowStorageID()) != NULL);
+        MacSet *ms = MacSetInit(10);
+        FlowSetStorageById(f, MacSetGetFlowStorageID(), ms);
     }
 
     SCReturn;

@@ -958,7 +958,7 @@ static int StreamTcpPacketStateNone(
             SCLogDebug("RST packet received, no session setup");
             return -1;
         }
-        ssn = StreamTcpNewSession(p, stt->ssn_pool_id);
+        ssn = StreamTcpNewSession(tv, stt, p, stt->ssn_pool_id);
         if (ssn == NULL) {
             StatsIncr(tv, stt->counter_tcp_ssn_memcap);
             return -1;

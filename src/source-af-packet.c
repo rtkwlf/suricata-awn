@@ -876,6 +876,7 @@ static void AFPReleasePacketV3(Packet *p)
     if ((p->afp_v.copy_mode != AFP_COPY_MODE_NONE) && !PKT_IS_PSEUDOPKT(p)) {
         AFPWritePacket(p, TPACKET_V3);
     }
+    (void)AFPDerefSocket(p->afp_v.mpeer);
     PacketFreeOrRelease(p);
 }
 #endif

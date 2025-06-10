@@ -1,7 +1,7 @@
 name: Run Snyk Security Scan
 on:
   pull_request:
-    branches: [master]
+    branches: [suricata-6.0.10-awn,suricata-6.0.18-awn,suricata-7.0.7-awn-poc]
     types: [labeled, unlabeled, opened, edited, reopened, synchronize, ready_for_review]
 
 jobs:

@@ -1,0 +1,78 @@
+name: Run Snyk Security Scan
+on:
+  pull_request:
+    branches: [suricata-6.0.10-awn, suricata-6.0.18-awn, suricata-7.0.7-awn-poc]
+    types: [labeled, unlabeled, opened, edited, reopened, synchronize, ready_for_review]
+
+jobs:
+  run-snyk-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '16'
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+      - name: Authenticate Snyk
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk auth $SNYK_TOKEN
+
+      - name: Install dependencies
+        run: cat apt-requirements.in | xargs sudo apt install 
+
+      - name: Install cbindgen for rust
+        run: cargo install --root /usr/ --force --version 0.24.5 cbindgen 
+
+      - name: Build the Tools
+        # Ensure that the dependencies are up to date by building the tools; if this fails, so does the entire job
+        run: make
+
+      - name: Run Snyk Test and Save Results
+        # If vulnerabilities are found, the program returns with 1, which we must ignore
+        run: |
+          snyk test --unmanaged --severity-threshold=high --json > snyk-results.json || true
+          CWD=$(pwd)
+          cd /usr/include && snyk test --unmanaged --severity-threshold=high --json > $CWD/include-snyk-results.json || true
+          cd /usr/local/include && snyk test --unmanaged --severity-threshold=high --json > $CWD/local-include-snyk-results.json || true
+
+      - name: Block Pull Request if Old Vulnerabilities Found
+        run: |
+           for results in "" "include-" "local-include-"; do
+             # Parse vulnerabilities from Snyk results
+             jq -c '.vulnerabilities[] | select(.severity == "high" or .severity == "critical")' "$results"snyk-results.json > filtered-vulnerabilities.json
+   
+             # Check each vulnerability's disclosure date
+             found_old_vulnerabilities=false
+   
+             current_date=$(date --utc +%Y-%m-%d)
+   
+             while IFS= read -r vulnerability; do
+               # Extract the disclosure date
+               disclosure_date=$(echo "$vulnerability" | jq -r '.disclosureTime')
+   
+               # Calculate the difference in days
+               days_since_disclosure=$(( ( $(date --utc --date="$current_date" +%s) - $(date --utc --date="$disclosure_date" +%s) ) / 86400 ))
+   
+               # If the vulnerability is older than 30 days, block the PR
+               if [ "$days_since_disclosure" -gt 30 ]; then
+                 found_old_vulnerabilities=true
+                 echo "Vulnerability older than 30 days: $vulnerability"
+               fi
+   
+             done < filtered-vulnerabilities.json
+           done
+
+           # Fail the workflow if old vulnerabilities are found
+           if [ "$found_old_vulnerabilities" = true ]; then
+             echo "Critical or high vulnerabilities older than 30 days were found! Blocking merge."
+             exit 1
+           else
+             echo "No vulnerabilities older than 30 days were found. Proceeding."
+           fi

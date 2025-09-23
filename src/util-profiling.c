@@ -1470,7 +1470,7 @@ int SCProfileRuleStopCollection(void)
 thread_local int profiling_rules_entered = 0;
 int profiling_output_to_file = 0;
 static SC_ATOMIC_DECLARE(uint64_t, samples);
-static uint64_t rate = 0;
+static uint64_t rate = 1;
 int profiling_rules_active = 0;
 
 /**

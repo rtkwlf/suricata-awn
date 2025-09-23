@@ -391,7 +391,6 @@ void SCProfilingRuleThreadSetup(struct SCProfileDetectCtx_ *, DetectEngineThread
 void SCProfilingRuleThreadCleanup(DetectEngineThreadCtx *);
 int SCProfileRuleStart(Packet *p);
 int SCProfileRuleTriggerDump(DetectEngineCtx *de_ctx);
-// or... json_t *SCProfileRuleTriggerDump(DetectEngineCtx *de_ctx); ? // JJW
 int SCProfileRuleStartCollection(void);
 int SCProfileRuleStopCollection(void);
 void SCProfilingRuleThreatAggregate(DetectEngineThreadCtx *det_ctx);

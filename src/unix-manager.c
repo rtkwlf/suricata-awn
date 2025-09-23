@@ -37,6 +37,8 @@
 #include "util-ebpf.h"
 #include "util-signal.h"
 #include "util-buffer.h"
+#include "util-path.h"
+#include "util-profiling.h"
 
 #if (defined BUILD_UNIX_SOCKET) && (defined HAVE_SYS_UN_H) && (defined HAVE_SYS_STAT_H) && (defined HAVE_SYS_TYPES_H)
 #include <sys/un.h>
@@ -790,6 +792,46 @@ static TmEcode UnixManagerRulesetStatsCommand(json_t *cmd,
     SCReturnInt(retval);
 }
 
+#ifdef PROFILE_RULES
+static TmEcode UnixManagerRulesetProfileCommand(json_t *cmd, json_t *server_msg, void *data)
+{
+    SCEnter();
+    TmEcode retval;
+    DetectEngineCtx *de_ctx = DetectEngineGetCurrent();
+
+    retval = SCProfileRuleTriggerDump(de_ctx);
+    json_object_set_new(server_msg, "message", json_string("OK"));
+    SCReturnInt(retval);
+}
+
+static TmEcode UnixManagerRulesetProfileStartCommand(json_t *cmd, json_t *server_msg, void *data)
+{
+    SCEnter();
+
+    int ret = SCProfileRuleStartCollection();
+    if (ret != TM_ECODE_OK) {
+        json_object_set_new(server_msg, "message", json_string("NOK"));
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+    json_object_set_new(server_msg, "message", json_string("OK"));
+    SCReturnInt(TM_ECODE_OK);
+}
+
+static TmEcode UnixManagerRulesetProfileStopCommand(json_t *cmd, json_t *server_msg, void *data)
+{
+    SCEnter();
+
+    int ret = SCProfileRuleStopCollection();
+    if (ret != TM_ECODE_OK) {
+        json_object_set_new(server_msg, "message", json_string("NOK"));
+        SCReturnInt(TM_ECODE_FAILED);
+    }
+    json_object_set_new(server_msg, "message", json_string("OK"));
+    SCReturnInt(TM_ECODE_OK);
+}
+
+#endif
+
 static TmEcode UnixManagerShowFailedRules(json_t *cmd,
                                           json_t *server_msg, void *data)
 {
@@ -1068,6 +1110,13 @@ int UnixManagerInit(void)
     UnixManagerRegisterCommand("ruleset-reload-time", UnixManagerReloadTimeCommand, NULL, 0);
     UnixManagerRegisterCommand("ruleset-stats", UnixManagerRulesetStatsCommand, NULL, 0);
     UnixManagerRegisterCommand("ruleset-failed-rules", UnixManagerShowFailedRules, NULL, 0);
+#ifdef PROFILE_RULES
+    UnixManagerRegisterCommand("ruleset-profile", UnixManagerRulesetProfileCommand, NULL, 0);
+    UnixManagerRegisterCommand(
+            "ruleset-profile-start", UnixManagerRulesetProfileStartCommand, NULL, 0);
+    UnixManagerRegisterCommand(
+            "ruleset-profile-stop", UnixManagerRulesetProfileStopCommand, NULL, 0);
+#endif
     UnixManagerRegisterCommand("register-tenant-handler", UnixSocketRegisterTenantHandler, &command, UNIX_CMD_TAKE_ARGS);
     UnixManagerRegisterCommand("unregister-tenant-handler", UnixSocketUnregisterTenantHandler, &command, UNIX_CMD_TAKE_ARGS);
     UnixManagerRegisterCommand("register-tenant", UnixSocketRegisterTenant, &command, UNIX_CMD_TAKE_ARGS);

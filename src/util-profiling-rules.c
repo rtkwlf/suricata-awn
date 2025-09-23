@@ -36,28 +36,11 @@
 #include "util-profiling.h"
 #include "util-profiling-locks.h"
 
-#ifdef PROFILING
+#include "util-byte.h"
+#include "util-conf.h"
+#include "util-time.h"
 
-/**
- * Extra data for rule profiling.
- */
-typedef struct SCProfileData_ {
-    uint32_t sid;
-    uint32_t gid;
-    uint32_t rev;
-    uint64_t checks;
-    uint64_t matches;
-    uint64_t max;
-    uint64_t ticks_match;
-    uint64_t ticks_no_match;
-} SCProfileData;
-
-typedef struct SCProfileDetectCtx_ {
-    uint32_t size;
-    uint32_t id;
-    SCProfileData *data;
-    pthread_mutex_t data_m;
-} SCProfileDetectCtx;
+#ifdef PROFILE_RULES
 
 /**
  * Used for generating the summary data to print.
@@ -610,10 +593,11 @@ void SCProfilingRuleThreadSetup(SCProfileDetectCtx *ctx, DetectEngineThreadCtx *
     }
 }
 
-static void SCProfilingRuleThreadMerge(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx)
+static void SCProfilingRuleThreadMerge(
+        DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx, int reset)
 {
     if (de_ctx == NULL || de_ctx->profile_ctx == NULL || de_ctx->profile_ctx->data == NULL ||
-        det_ctx == NULL || det_ctx->rule_perf_data == NULL)
+            det_ctx == NULL || det_ctx->rule_perf_data == NULL)
         return;
 
     int i;
@@ -622,6 +606,12 @@ static void SCProfilingRuleThreadMerge(DetectEngineCtx *de_ctx, DetectEngineThre
         de_ctx->profile_ctx->data[i].matches += det_ctx->rule_perf_data[i].matches;
         de_ctx->profile_ctx->data[i].ticks_match += det_ctx->rule_perf_data[i].ticks_match;
         de_ctx->profile_ctx->data[i].ticks_no_match += det_ctx->rule_perf_data[i].ticks_no_match;
+        if (reset) {
+            det_ctx->rule_perf_data[i].checks = 0;
+            det_ctx->rule_perf_data[i].matches = 0;
+            det_ctx->rule_perf_data[i].ticks_match = 0;
+            det_ctx->rule_perf_data[i].ticks_no_match = 0;
+        }
         if (det_ctx->rule_perf_data[i].max > de_ctx->profile_ctx->data[i].max)
             de_ctx->profile_ctx->data[i].max = det_ctx->rule_perf_data[i].max;
     }
@@ -633,12 +623,22 @@ void SCProfilingRuleThreadCleanup(DetectEngineThreadCtx *det_ctx)
         return;
 
     pthread_mutex_lock(&det_ctx->de_ctx->profile_ctx->data_m);
-    SCProfilingRuleThreadMerge(det_ctx->de_ctx, det_ctx);
+    SCProfilingRuleThreadMerge(det_ctx->de_ctx, det_ctx, 0);
     pthread_mutex_unlock(&det_ctx->de_ctx->profile_ctx->data_m);
 
     SCFree(det_ctx->rule_perf_data);
     det_ctx->rule_perf_data = NULL;
     det_ctx->rule_perf_data_size = 0;
+}
+
+void SCProfilingRuleThreatAggregate(DetectEngineThreadCtx *det_ctx)
+{
+
+    if (det_ctx == NULL || det_ctx->de_ctx == NULL || det_ctx->de_ctx->profile_ctx == NULL)
+        return;
+    pthread_mutex_lock(&det_ctx->de_ctx->profile_ctx->data_m);
+    SCProfilingRuleThreadMerge(det_ctx->de_ctx, det_ctx, 1);
+    pthread_mutex_unlock(&det_ctx->de_ctx->profile_ctx->data_m);
 }
 
 /**
@@ -678,6 +678,12 @@ SCProfilingRuleInitCounters(DetectEngineCtx *de_ctx)
     }
 
     SCLogPerf("Registered %"PRIu32" rule profiling counters.", count);
+}
+
+int SCProfileRuleTriggerDump(DetectEngineCtx *de_ctx)
+{
+    SCProfilingRuleDump(de_ctx->profile_ctx);
+    return TM_ECODE_OK;
 }
 
 #endif /* PROFILING */

@@ -33,7 +33,8 @@
 
 #ifdef HAVE_NSS
 #include <prinit.h>
-#include <nss.h>
+#include <openssl/evp.h>
+#include <openssl/err.h>
 #endif
 
 #include "suricata.h"
@@ -2702,7 +2703,8 @@ int PostConfLoadedSetup(SCInstance *suri)
     if (suri->run_mode != RUNMODE_CONF_TEST) {
         /* init NSS for hashing */
         PR_Init(PR_USER_THREAD, PR_PRIORITY_NORMAL, 0);
-        NSS_NoDB_Init(NULL);
+        OpenSSL_add_all_algorithms();
+        ERR_load_crypto_strings();
         atexit(AtExitNSSShutdown);
     }
 #endif

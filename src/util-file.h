@@ -25,8 +25,11 @@
 #ifndef __UTIL_FILE_H__
 #define __UTIL_FILE_H__
 
-#ifdef HAVE_NSS
-#include <sechash.h>
+#ifdef HAVE_OPENSSL
+#include <openssl/evp.h>
+#define MD5_LENGTH 16
+#define SHA1_LENGTH 20
+#define SHA256_LENGTH 32
 #endif
 
 #include "conf.h"
@@ -79,14 +82,14 @@ typedef struct File_ {
     char *magic;
 #endif
     struct File_ *next;
-#ifdef HAVE_NSS
-    HASHContext *md5_ctx;
+#ifdef HAVE_OPENSSL
+    EVP_MD_CTX *md5_ctx;
     uint8_t md5[MD5_LENGTH];
     uint64_t md5_num_bytes;
-    HASHContext *sha1_ctx;
+    EVP_MD_CTX *sha1_ctx;
     uint8_t sha1[SHA1_LENGTH];
     uint64_t sha1_num_bytes;
-    HASHContext *sha256_ctx;
+    EVP_MD_CTX *sha256_ctx;
     uint8_t sha256[SHA256_LENGTH];
     uint64_t sha256_num_bytes;
 #endif

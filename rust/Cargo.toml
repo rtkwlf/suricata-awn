@@ -6,7 +6,7 @@ rust-version = "1.41.1"
 
 [lib]
 crate-type = ["staticlib", "rlib"]
-path = "/workspaces/rtkwlf/suricata-awn/rust/src/lib.rs"
+path = "/workspaces/awn/cell/rtkbox/suricata6-xdp/suricata/rust/src/lib.rs"
 
 [profile.release]
 debug = true

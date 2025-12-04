@@ -1870,107 +1870,54 @@
         AC_DEFINE([HAVE_DAG],[1],(Endace DAG card support enabled))
     fi
 
-# libnspr (enabled by default)
-    AC_ARG_ENABLE(nspr,
-            AS_HELP_STRING([--disable-nspr],[Disable libnspr support]),
-            [enable_nspr=$enableval],[enable_nspr="yes"])
+# OpenSSL (enabled by default)
+    AC_ARG_ENABLE(openssl,
+            AS_HELP_STRING([--disable-openssl],[Disable OpenSSL support]),
+            [enable_openssl=$enableval],[enable_openssl="yes"])
 
-    AC_ARG_WITH(libnspr_includes,
-            [  --with-libnspr-includes=DIR  libnspr include directory],
-            [with_libnspr_includes="$withval"],[with_libnspr_includes="no"])
+    AC_ARG_WITH(openssl_includes,
+            [  --with-openssl-includes=DIR  OpenSSL include directory],
+            [with_openssl_includes="$withval"],[with_openssl_includes="no"])
 
-    AC_ARG_WITH(libnspr_libraries,
-            [  --with-libnspr-libraries=DIR    libnspr library directory],
-            [with_libnspr_libraries="$withval"],[with_libnspr_libraries="no"])
+    AC_ARG_WITH(openssl_libraries,
+            [  --with-openssl-libraries=DIR    OpenSSL library directory],
+            [with_openssl_libraries="$withval"],[with_openssl_libraries="no"])
 
-    if test "$enable_nspr" != "no"; then
+    if test "$enable_openssl" != "no"; then
         # Try pkg-config first:
-        PKG_CHECK_MODULES([libnspr],nspr,,[with_pkgconfig_nspr="no"])
+        PKG_CHECK_MODULES([openssl],[openssl >= 3.0.0],,[with_pkgconfig_openssl="no"])
 
-        if test "$with_pkgconfig_nspr" != "no"; then
-            CPPFLAGS="${CPPFLAGS} ${libnspr_CFLAGS}"
-            LIBS="${LIBS} ${libnspr_LIBS}"
+        if test "$with_pkgconfig_openssl" != "no"; then
+            CPPFLAGS="${CPPFLAGS} ${openssl_CFLAGS}"
+            LIBS="${LIBS} ${openssl_LIBS}"
         fi
 
-        if test "$with_libnspr_includes" != "no"; then
-            CPPFLAGS="${CPPFLAGS} -I${with_libnspr_includes}"
+        if test "$with_openssl_includes" != "no"; then
+            CPPFLAGS="${CPPFLAGS} -I${with_openssl_includes}"
         fi
         TMPLIBS="${LIBS}"
-        AC_CHECK_HEADER(nspr.h,
-           AC_CHECK_LIB(nspr4,PR_GetCurrentThread,[AC_DEFINE([HAVE_NSPR],[1],[libnspr available])
-           NSPR="yes"
-            if test "$NSPR" = "yes"; then
-                if test "$with_libnspr_libraries" != "no"; then
-                    LDFLAGS="${LDFLAGS}  -L${with_libnspr_libraries}"
-                   LIBS="${TMPLIBS}"
+        AC_CHECK_HEADER(openssl/evp.h,
+           AC_CHECK_LIB(crypto,EVP_MD_CTX_new,[AC_DEFINE([HAVE_OPENSSL],[1],[OpenSSL available])
+           OPENSSL="yes"
+            if test "$OPENSSL" = "yes"; then
+                if test "$with_openssl_libraries" != "no"; then
+                    LDFLAGS="${LDFLAGS}  -L${with_openssl_libraries}"
+                   LIBS="${TMPLIBS} -lcrypto -lssl"
                 else
-                   LIBS="${TMPLIBS}"
+                   LIBS="${TMPLIBS} -lcrypto -lssl"
                 fi
-            fi]),NSPR="no")
+            fi]),OPENSSL="no")
 
-        if test "$NSPR" = "no"; then
+        if test "$OPENSSL" = "no"; then
             echo
-            echo "   libnspr library not found, go get it"
-            echo "   from Mozilla or your distribution:"
+            echo "   OpenSSL library not found, go get it"
+            echo "   from your distribution:"
             echo
-            echo "   Ubuntu: apt-get install libnspr4-dev"
-            echo "   Fedora: dnf install nspr-devel"
-            echo "   CentOS/RHEL: yum install nspr-devel"
+            echo "   Ubuntu: apt-get install libssl-dev"
+            echo "   Fedora: dnf install openssl-devel"
+            echo "   CentOS/RHEL: yum install openssl-devel"
             echo
-            enable_nspr="no"
-        fi
-    fi
-
-  # libnss (enabled by default)
-
-    AC_ARG_ENABLE(nss,
-            AS_HELP_STRING([--disable-nss],[Disable libnss support]),
-            [enable_nss=$enableval],[enable_nss="yes"])
-
-    AC_ARG_WITH(libnss_includes,
-            [  --with-libnss-includes=DIR  libnss include directory],
-            [with_libnss_includes="$withval"],[with_libnss_includes="no"])
-
-    AC_ARG_WITH(libnss_libraries,
-            [  --with-libnss-libraries=DIR    libnss library directory],
-            [with_libnss_libraries="$withval"],[with_libnss_libraries="no"])
-
-    if test "$enable_nss" != "no"; then
-        # Try pkg-config first:
-        PKG_CHECK_MODULES([libnss],nss,,[with_pkgconfig_nss="no"])
-
-        if test "$with_pkgconfig_nss" != "no"; then
-            CPPFLAGS="${CPPFLAGS} ${libnss_CFLAGS}"
-            LIBS="${LIBS} ${libnss_LIBS}"
-        fi
-
-        if test "$with_libnss_includes" != "no"; then
-            CPPFLAGS="${CPPFLAGS} -I${with_libnss_includes}"
-        fi
-        TMPLIBS="${LIBS}"
-
-        AC_CHECK_HEADER(sechash.h,
-            AC_CHECK_LIB(nss3,HASH_Begin,[AC_DEFINE([HAVE_NSS],[1],[libnss available])
-            NSS="yes"
-           if test "$NSS" = "yes"; then
-                if test "$with_libnss_libraries" != "no"; then
-                    LDFLAGS="${LDFLAGS}  -L${with_libnss_libraries}"
-                   LIBS="${TMPLIBS}"
-               else
-                   LIBS="${TMPLIBS}"
-                fi
-           fi]),NSS="no")
-
-        if test "$NSS" = "no"; then
-            echo
-            echo "   libnss library not found, go get it"
-            echo "   from Mozilla or your distribution:"
-            echo
-            echo "   Ubuntu: apt-get install libnss3-dev"
-            echo "   Fedora: dnf install nss-devel"
-            echo "   CentOS/RHEL: yum install nss-devel"
-            echo
-            enable_nss="no"
+            enable_openssl="no"
         fi
     fi
 
@@ -2833,8 +2780,7 @@ SURICATA_BUILD_CONF="Suricata Configuration:
   Detection enabled:                       ${enable_detection}
 
   Libmagic support:                        ${enable_magic}
-  libnss support:                          ${enable_nss}
-  libnspr support:                         ${enable_nspr}
+  OpenSSL support:                         ${enable_openssl}
   libjansson support:                      ${enable_jansson}
   hiredis support:                         ${enable_hiredis}
   hiredis async with libevent:             ${enable_hiredis_async}

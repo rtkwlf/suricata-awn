@@ -2,7 +2,7 @@ Source: suricata
 Section: devel
 Priority: extra
 Maintainer: Arctic Wolf Networks Inc. Development <dev@arcticwolf.com>
-Build-Depends: debhelper (>= 8.0.0), autotools-dev,debhelper (>= 8.0.0), autotools-dev, pkg-config, libnss3-dev, libpcre3,libpcre3-dbg, libpcre3-dev, libpcap-dev, libnet1-dev, libyaml-0-2, libyaml-dev, zlib1g, zlib1g-dev, libcap-ng-dev, libcap-ng0, libnspr4-dev, libgeoip1, libgeoip-dev, libnetfilter-queue-dev, libnetfilter-queue1, libnfnetlink-dev, libnfnetlink0, file (>= 5.25), python-distutils-extra, python-setuptools, python-support|dh-python, libjansson4, libjansson-dev, libnuma1, libnuma-dev
+Build-Depends: debhelper (>= 8.0.0), autotools-dev,debhelper (>= 8.0.0), autotools-dev, pkg-config, libssl-dev, libpcre3,libpcre3-dbg, libpcre3-dev, libpcap-dev, libnet1-dev, libyaml-0-2, libyaml-dev, zlib1g, zlib1g-dev, libcap-ng-dev, libcap-ng0, libgeoip1, libgeoip-dev, libnetfilter-queue-dev, libnetfilter-queue1, libnfnetlink-dev, libnfnetlink0, file (>= 5.25), python-distutils-extra, python-setuptools, python-support|dh-python, libjansson4, libjansson-dev, libnuma1, libnuma-dev
 X-Python-Version: >= 2.6
 Standards-Version: 3.9.2
 Homepage: http://www.openinfosecfoundation.org/
@@ -18,7 +18,7 @@ Description: Suricata open source multi-thread IDS/IPS/NSM.
 
 Package: suricata6-xdp-dev
 Architecture: any
-Depends: ${misc:Depends}, autotools-dev, libnss3-dev, libpcre3-dev, libpcap-dev, libnet1-dev, libyaml-dev, zlib1g-dev, libcap-ng-dev, libnspr4-dev, libgeoip-dev, libnetfilter-queue-dev, libnfnetlink-dev, libmagic-dev, libjansson-dev (>= 2.7)
+Depends: ${misc:Depends}, autotools-dev, libssl-dev, libpcre3-dev, libpcap-dev, libnet1-dev, libyaml-dev, zlib1g-dev, libcap-ng-dev, libgeoip-dev, libnetfilter-queue-dev, libnfnetlink-dev, libmagic-dev, libjansson-dev (>= 2.7)
 Replaces: libhtp1, suricata2beta-dev, suricata6-xdp
 Conflicts: suricata2beta-dev
 Provides: suricata6-dev

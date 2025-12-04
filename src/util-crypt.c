@@ -29,8 +29,9 @@
 #include "suricata-common.h"
 #include "suricata.h"
 #include "util-crypt.h"
-#ifdef HAVE_NSS
-#include <sechash.h>
+#ifdef HAVE_OPENSSL
+#include <openssl/evp.h>
+#include <openssl/err.h>
 #endif
 
 #ifndef HAVE_NSS
@@ -240,7 +241,7 @@ int ComputeSHA1(const uint8_t *inbuf, size_t inbuf_len,
     return 1;
 }
 
-#else /* HAVE_NSS */
+#else /* HAVE_OPENSSL */
 
 /** \brief calculate SHA1 hash
  *  \retval int 1 for success, 0 for fail
@@ -251,21 +252,24 @@ int ComputeSHA1(const uint8_t *inbuf, size_t inbuf_len,
     if (unlikely(outbuf_size != 20))
         return 0;
 
-    HASHContext *sha1_ctx = HASH_Create(HASH_AlgSHA1);
+    EVP_MD_CTX *sha1_ctx = EVP_MD_CTX_new();
     if (sha1_ctx == NULL) {
         return 0;
     }
 
-    HASH_Begin(sha1_ctx);
-    HASH_Update(sha1_ctx, inbuf, inbuf_len);
+    if (EVP_DigestInit_ex(sha1_ctx, EVP_sha1(), NULL) != 1) {
+        EVP_MD_CTX_free(sha1_ctx);
+        return 0;
+    }
+    EVP_DigestUpdate(sha1_ctx, inbuf, inbuf_len);
     unsigned int rlen;
-    HASH_End(sha1_ctx, outbuf, &rlen, outbuf_size);
-    HASH_Destroy(sha1_ctx);
+    EVP_DigestFinal_ex(sha1_ctx, outbuf, &rlen);
+    EVP_MD_CTX_free(sha1_ctx);
 
     return rlen == outbuf_size;
 }
 
-#endif /* HAVE_NSS */
+#endif /* HAVE_OPENSSL */
 
 static const char *b64codes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

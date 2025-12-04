@@ -41,11 +41,7 @@ override_dh_auto_configure:
 		--enable-ebpf-build \
 		--enable-nfqueue \
 		--disable-gccmarch-native \
-		--enable-geoip \
-		--with-libnss-libraries=/usr/lib \
-		--with-libnss-includes=/usr/include/nss/ \
-		--with-libnspr-libraries=/usr/lib \
-		--with-libnspr-includes=/usr/include/nspr
+		--enable-geoip
 override_dh_auto_install:
 	dh_auto_install -- prefix=/opt/suricata6
 	# remove the dependency_libs field (see wiki.debian.org/ReleaseGoals/LAFileRemoval)

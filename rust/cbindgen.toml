@@ -89,6 +89,7 @@ exclude = [
     "FileContainer",
     "JsonT",
     "IKEV2State",
+    "X509",
     "IKEV2Transaction",
     "KRB5State",
     "KRB5Transaction",

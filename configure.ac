@@ -1902,9 +1902,9 @@
             if test "$OPENSSL" = "yes"; then
                 if test "$with_openssl_libraries" != "no"; then
                     LDFLAGS="${LDFLAGS}  -L${with_openssl_libraries}"
-                   LIBS="${TMPLIBS}"
+                   LIBS="${TMPLIBS} -lcrypto -lssl"
                 else
-                   LIBS="${TMPLIBS}"
+                   LIBS="${TMPLIBS} -lcrypto -lssl"
                 fi
             fi]),OPENSSL="no")
 

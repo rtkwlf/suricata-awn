@@ -1,0 +1,21 @@
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  annotations:
+    backstage.io/code-coverage: enabled
+    backstage.io/source-location: url:https://github.com/rtkwlf/suricata-awn
+    github.com/project-slug: rtkwlf/suricata-awn
+    jira/project-key: SSC
+    jira/label: rtkbox
+    snyk.io/org-id: 7094e6d4-5396-43de-8cf1-3c3ec491e8bb
+    snyk.io/targets: rtkwlf/suricata-awn
+  description: AWN suricata fork.
+  name: suricata-awn
+spec:
+  cell: Cell:rtkbox
+  dependsOn: []
+  lifecycle: production
+  owner: pathfinders
+  type: library
+  system: scanner-sensor-platform

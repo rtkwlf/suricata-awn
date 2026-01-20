@@ -9,6 +9,7 @@
 *.pcap
 *.pcapng
 /*.yaml
+!catalog-info.yaml
 Makefile
 .deps/
 .libs/

@@ -55,6 +55,11 @@
 
 extern TcpStreamCnf stream_config;
 
+/* If there's ever a case whereby the FlowDoPeriodicLog() function is called while 
+ * iterating a full hash bucket, we'll need to ensure the order is preserved.
+ * For now, it's okay, as this function call breaks the iteration of the bucket.
+ */
+#define PERIODIC_LOG_PRESERVE_HASH_ORDER (0)
 
 FlowBucket *flow_hash;
 SC_ATOMIC_EXTERN(unsigned int, flow_prune_idx);
@@ -887,6 +892,81 @@ static inline uint16_t GetTvId(const ThreadVars *tv)
     return tv_id;
 }
 
+static Flow *FlowDoPeriodicLog(ThreadVars *tv,
+                               FlowLookupStruct *fls,
+                               FlowBucket *fb,
+                               Flow *old_f,
+                               Flow *prev_f,
+                               const uint32_t hash,
+                               const Packet *p)
+{
+    /** Lock is alreay hold on this flow and hence, no race condition can occur
+    /* AWN REVISIT: FlowManagerHashRowTimeout() also doesn't timeout a flow if:
+     * !FlowBypassedTimeout(f, ts, counters)
+     */
+
+    /* Get a new flow. It will be either a locked flow or NULL */
+    Flow* new_f = FlowGetNew(tv, fls, /* cast away const: */ (Packet *)p);
+    if (new_f == NULL) {
+        return old_f;
+    }
+
+    BUG_ON( prev_f && (prev_f->next != old_f) );
+    BUG_ON( prev_f && (prev_f->fb != fb) );
+
+    /* get some settings that we move over to the new flow */
+    FlowThreadId thread_id[2] = { old_f->thread_id[0], old_f->thread_id[1] };
+
+    /* new Flow is locked */
+
+#if PERIODIC_LOG_PRESERVE_HASH_ORDER
+    /* Replace old_f w/ new_f, in the same position in the hash bucket... */
+    new_f->fb = fb;
+    new_f->next = old_f->next;
+    if(prev_f) {
+        prev_f->next = new_f;
+    } else {
+        fb->head = new_f;
+    }
+
+    old_f->fb = NULL;
+#else
+    /* remove old Flow from the hash; NOTE: we *must* do this before adding the new flow 
+     * to the bucket, as adding the new flow modifies the list and potentially the relationship 
+     * between old_f -> prev_f (i.e., in the 1-flow-in-the-bucket case new_f would become prev_f
+     */
+    RemoveFromHash(old_f, prev_f);
+
+    /* Now put the new flow at the start of the hash bucket */
+    new_f->next = fb->head;
+    fb->head = new_f;
+    new_f->fb = fb;
+#endif
+
+    /* initialize new flow */
+    FlowInitFromFlow(tv, new_f, old_f, p);
+    new_f->thread_id[0] = thread_id[0];
+    new_f->thread_id[1] = thread_id[1];
+
+
+    SC_ATOMIC_SET(fb->next_ts, 0);
+
+    /* AWN: REVISIT:
+     * Sur6 does this:
+     * FlowQueuePrivateAppendFlow(&td->aside_queue, f);
+     * Which sends the flow through the "aside_queue" for deferred processing.
+     * The deferred processing potentially goes through a "FlowForceReassemblyForFlow(f)" step, which we're
+     * skipping here; is that okay?
+     * 
+     * Otherwise, the flow ultimately transitions from the aside_queue, into the flow_recycle_q, 
+     * after being unlocked, which we do here as well...
+     */
+    FLOWLOCK_UNLOCK(old_f);
+    FlowEnqueue(&flow_recycle_q, old_f);
+
+    return new_f;
+}
+
 /** \brief Get Flow for packet
  *
  * Hash retrieval function for flows. Looks up the hash bucket containing the
@@ -970,6 +1050,11 @@ Flow *FlowGetFlowFromHash(ThreadVars *tv, FlowLookupStruct *fls, Packet *p, Flow
                         return NULL;
                     }
                     f = new_f;
+                 } else if (unlikely(FlowShouldPeriodicLog(f) == 1)) {
+                     /* If we *just* create a new flow, due to TCP 5-tuple re-use, then don't
+                      * bother to check if we need to perform a periodic log; we shouldn't!
+                     */
+                     f = FlowDoPeriodicLog(tv, fls, fb, f, prev_f, hash, p);
                 }
                 FlowReference(dest, f);
                 FBLOCK_UNLOCK(fb);

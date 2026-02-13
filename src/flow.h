@@ -488,6 +488,9 @@ typedef struct Flow_
     uint32_t tosrcpktcnt;
     uint64_t todstbytecnt;
     uint64_t tosrcbytecnt;
+    
+    /* Hostname of the first HTTP request issued on the flow */
+    char *http_hostname;
 
     Storage storage[];
 } Flow;
@@ -512,6 +515,7 @@ typedef struct FlowProtoTimeout_ {
     uint32_t est_timeout;
     uint32_t closed_timeout;
     uint32_t bypassed_timeout;
+    uint32_t active; /** Max duration to track active flow state */
 } FlowProtoTimeout;
 
 typedef struct FlowProtoFreeFunc_ {

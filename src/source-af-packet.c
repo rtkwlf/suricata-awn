@@ -714,6 +714,7 @@ static void AFPReleasePacketV3(Packet *p)
     if (p->afp_v.copy_mode != AFP_COPY_MODE_NONE) {
         AFPWritePacket(p, TPACKET_V3);
     }
+    (void)AFPDerefSocket(p->afp_v.mpeer);
     PacketFreeOrRelease(p);
 }
 
@@ -2132,6 +2133,10 @@ TmEcode AFPSetBPFFilter(AFPThreadVars *ptv)
                 errbuf, sizeof(errbuf)) == -1) {
         SCLogError("%s: failed to compile BPF \"%s\": %s", ptv->iface, ptv->bpf_filter, errbuf);
         return TM_ECODE_FAILED;
+    }
+    // don't spam the logs... only dump the disassembly on the first worker thread...
+    if(ptv->tv->id == 1) {
+        SCBPFDump(&filter, false);
     }
 
     if (filter.bf_len > USHRT_MAX) {

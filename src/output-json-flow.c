@@ -180,6 +180,12 @@ void EveAddAppProto(Flow *f, SCJsonBuilder *js)
     if (f->alproto) {
         SCJbSetString(js, "app_proto", AppProtoToString(f->alproto));
     }
+
+    /* Log the hostname for HTTP flows */
+    if (f->alproto == ALPROTO_HTTP && f->http_hostname != NULL) {
+        SCJbSetString(js, "hostname", f->http_hostname);
+    }
+
     if (f->alproto_ts && f->alproto_ts != f->alproto) {
         SCJbSetString(js, "app_proto_ts", AppProtoToString(f->alproto_ts));
     }
@@ -216,6 +222,12 @@ void EveAddFlow(Flow *f, SCJsonBuilder *js)
         SCJbSetUint(js, "bytes_toserver", f->todstbytecnt);
         SCJbSetUint(js, "bytes_toclient", f->tosrcbytecnt);
     }
+
+    TcpSession *ssn = (TcpSession *)f->protoctx;
+    if ((ssn != NULL) && (ssn->flags & STREAMTCP_FLAG_MIDSTREAM)) {
+        JB_SET_TRUE(js, "midstream");
+    }
+    
 
     char timebuf1[64];
     CreateIsoTimeString(f->startts, timebuf1, sizeof(timebuf1));
@@ -386,8 +398,16 @@ static void EveFlowLogJSON(OutputJsonThreadCtx *aft, SCJsonBuilder *jb, Flow *f)
         SCJbSetString(jb, "tcp_flags_ts", hexflags);
 
         snprintf(hexflags, sizeof(hexflags), "%02x",
+                ssn ? ssn->client.tcp_init_flags : 0);
+        SCJbSetString(jb, "tcp_init_flags_ts", hexflags);
+
+        snprintf(hexflags, sizeof(hexflags), "%02x",
                 ssn ? ssn->server.tcp_flags : 0);
         SCJbSetString(jb, "tcp_flags_tc", hexflags);
+
+        snprintf(hexflags, sizeof(hexflags), "%02x",
+                ssn ? ssn->server.tcp_init_flags : 0);
+        SCJbSetString(jb, "tcp_init_flags_tc", hexflags);
 
         EveTcpFlags(ssn ? ssn->tcp_packet_flags : 0, jb);
 

@@ -92,10 +92,13 @@ typedef struct File_ {
     struct File_ *next;
     SCMd5 *md5_ctx;
     uint8_t md5[SC_MD5_LEN];
+    uint64_t md5_num_bytes;
     SCSha1 *sha1_ctx;
     uint8_t sha1[SC_SHA1_LEN];
+    uint64_t sha1_num_bytes;
     SCSha256 *sha256_ctx;
     uint8_t sha256[SC_SHA256_LEN];
+    uint64_t sha256_num_bytes;
     uint64_t content_inspected;     /**< used in pruning if FILE_USE_DETECT
                                      *   flag is set */
     uint64_t content_stored;
@@ -147,7 +150,7 @@ int FileOpenFileWithId(FileContainer *, const StreamingBufferConfig *,
         const uint8_t *data, uint32_t data_len, uint16_t flags);
 
 /**
- *  \brief Close a File
+ *  \brief Close all Files in the container
  *
  *  \param ffc the container
  *  \param data final data if any
@@ -163,6 +166,7 @@ int FileCloseFileById(FileContainer *, const StreamingBufferConfig *sbcfg, uint3
         const uint8_t *data, uint32_t data_len, uint16_t flags);
 int FileCloseFilePtr(File *ff, const StreamingBufferConfig *sbcfg, const uint8_t *data,
         uint32_t data_len, uint16_t flags);
+
 
 /**
  *  \brief Store a chunk of file data in the flow. The open "flowfile"
@@ -233,6 +237,7 @@ int FileForceSha256(void);
 void FileUpdateFlowFileFlags(Flow *f, uint16_t set_file_flags, uint8_t direction);
 
 void FileForceHashParseCfg(SCConfNode *);
+void FileHashByteLimit(uint64_t value);
 
 void FileForceTrackingEnable(void);
 

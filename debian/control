@@ -1,0 +1,31 @@
+Source: suricata
+Section: devel
+Priority: extra
+Maintainer: Arctic Wolf Networks Inc. Development <dev@arcticwolf.com>
+Build-Depends: debhelper (>= 8.0.0), autotools-dev, pkg-config, clang-10, libpcre2-dev, libpcap-dev, libnet1-dev, libyaml-0-2, libyaml-dev, zlib1g, zlib1g-dev, libcap-ng-dev, libcap-ng0, libgeoip1, libgeoip-dev, libnetfilter-queue-dev, libnetfilter-queue1, libnfnetlink-dev, libnfnetlink0, file (>= 5.25), python-distutils-extra, python-setuptools, python-support|dh-python, libjansson4, libjansson-dev, libnuma1, libnuma-dev                                                                 
+X-Python-Version: >= 2.6
+Standards-Version: 3.9.2
+Homepage: http://www.openinfosecfoundation.org/
+
+Package: suricata8-xdp
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${python:Depends}
+Replaces: suricata2beta
+Conflicts: suricata2beta
+Provides: suricata8
+Description: Suricata open source multi-thread IDS/IPS/NSM.
+ Suricata open source multi-thread IDS/IPS/NSM.
+
+Package: suricata8-xdp-dbg
+Architecture: any
+Section: debug
+Priority: extra
+Depends: suricata8-xdp (= ${binary:Version}), ${misc:Depends}
+Replaces: suricata2beta-dbg, suricata8-xdp
+Conflicts: suricata2beta-dbg
+Provides: suricata8-dbg
+Description: Suricata open source multi-thread IDS/IPS/NSM.
+ Suricata open source multi-thread IDS/IPS/NSM.
+ .
+ This package contains the debug symbols.
+

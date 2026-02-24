@@ -182,7 +182,7 @@ void EveAddAppProto(Flow *f, SCJsonBuilder *js)
     }
 
     /* Log the hostname for HTTP flows */
-    if (f->alproto == ALPROTO_HTTP && f->http_hostname != NULL) {
+    if ((f->alproto == ALPROTO_HTTP1 || f->alproto == ALPROTO_HTTP2) && f->http_hostname != NULL) {
         SCJbSetString(js, "hostname", f->http_hostname);
     }
 

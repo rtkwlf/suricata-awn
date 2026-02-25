@@ -1726,6 +1726,11 @@ static int HTPCallbackRequestComplete(const htp_connp_t *connp, htp_tx_t *tx)
         SCReturnInt(HTP_STATUS_ERROR);
     }
 
+    /* Attach the hostname to the flow for inclusion in flow JSON log records */
+    if (hstate->f->http_hostname == NULL && htp_tx_request_hostname(tx) != NULL) {
+        hstate->f->http_hostname = bstr_util_strdup_to_c(htp_tx_request_hostname(tx));
+    }
+
     const uint64_t abs_right_edge =
             hstate->slice->offset + htp_connp_request_data_consumed(hstate->connp);
 
@@ -1873,10 +1878,6 @@ static int HTPCallbackRequestHeaderData(const htp_connp_t *connp, htp_tx_data_t 
     HtpState *hstate = htp_connp_user_data(connp);
     if (tx && htp_tx_flags(tx)) {
         HTPErrorCheckTxRequestFlags(hstate, tx);
-    }
-    /* Attach the hostname to the flow for inclusion in flow JSON log records */
-    if (hstate->f->http_hostname == NULL && htp_tx_request_hostname(tx) != NULL) {
-        hstate->f->http_hostname = bstr_util_strdup_to_c(htp_tx_request_hostname(tx));
     }
     return HTP_STATUS_OK;
 }

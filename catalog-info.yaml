@@ -16,6 +16,6 @@ spec:
   cell: Cell:rtkbox
   dependsOn: []
   lifecycle: production
-  owner: pathfinders
+  owner: ssc-renegades
   type: library
   system: scanner-sensor-platform

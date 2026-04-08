@@ -908,7 +908,8 @@ static int SCThresholdConfAddThresholdtype(char *rawstr, DetectEngineCtx *de_ctx
         goto error;
     }
 
-    pcre2_substring_free((PCRE2_UCHAR8 *)th_ip);
+    if (th_ip != NULL)
+        pcre2_substring_free((PCRE2_UCHAR8 *)th_ip);
     return 0;
 error:
     if (th_ip != NULL)

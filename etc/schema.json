@@ -2078,6 +2078,10 @@
                     "description":
                             "The exception policy(ies) triggered by the flow. Not logged if none was triggered"
                 },
+                "midstream": {
+                    "type": "boolean",
+                    "description": "Indicates if the flow was picked up midstream (not from the beginning)"
+                },
                 "pkts_toclient": {
                     "type": "integer",
                     "suricata": {
@@ -2223,6 +2227,10 @@
             "$comment":
                     "May change to sensor_name in the future, or become user configurable: https://redmine.openinfosecfoundation.org/issues/4919",
             "description": "the sensor-name, if configured"
+        },
+        "hostname": {
+            "type": "string",
+            "description": "HTTP hostname extracted from the flow, logged at event level"
         },
         "http": {
             "type": "object",
@@ -2426,6 +2434,34 @@
                 },
                 "xff": {
                     "type": "string"
+                },
+                "payload": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "sha256": {
+                            "type": "string",
+                            "description": "SHA256 hash of the HTTP payload"
+                        },
+                        "bytes-hashed": {
+                            "type": "integer",
+                            "description": "Number of bytes hashed for the payload"
+                        },
+                        "file-magic-type": {
+                            "type": "string",
+                            "description": "File type detected via magic/libmagic"
+                        },
+                        "file-magic-extra": {
+                            "type": "string",
+                            "description": "Additional file type information from magic/libmagic"
+                        }
+                    }
+                },
+                "request_total_length": {
+                    "type": "integer"
+                },
+                "response_total_length": {
+                    "type": "integer"
                 }
             }
         },
@@ -8199,6 +8235,12 @@
                     "type": "string"
                 },
                 "tcp_flags_ts": {
+                    "type": "string"
+                },
+                "tcp_init_flags_tc": {
+                    "type": "string"
+                },
+                "tcp_init_flags_ts": {
                     "type": "string"
                 },
                 "ts_gap": {

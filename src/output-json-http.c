@@ -426,10 +426,80 @@ void EveHttpLogJSONBodyBase64(SCJsonBuilder *js, Flow *f, uint64_t tx_id)
     }
 }
 
+/**
+ * Common helper: calculate the on-wire length of an HTTP message's start-line
+ * plus all headers plus the final blank-line separator.
+ *
+ * @param line          The request- or response-line bstr (may be NULL).
+ * @param line_has_crlf True when the line already includes its trailing CRLF
+ *                      (response line, stored as-is by libhtp-rs); false when
+ *                      the CRLF was chomped (request line) and must be added back.
+ * @param headers       The corresponding header collection (may be NULL).
+ */
+static uint64_t HttpCalculateHeaderLength(
+        const bstr *line, bool line_has_crlf, const htp_headers_t *headers)
+{
+    uint64_t total_len = 0;
+
+    if (line != NULL) {
+        total_len += bstr_len(line);
+        if (!line_has_crlf)
+            total_len += 2; /* add back the \r\n that was chomped */
+    }
+
+    /* Each header: "Name: Value\r\n" */
+    if (headers != NULL) {
+        size_t n = htp_headers_size(headers);
+        for (size_t i = 0; i < n; i++) {
+            const htp_header_t *h = htp_headers_get_index(headers, i);
+            if (h != NULL) {
+                total_len += htp_header_name_len(h);
+                total_len += 2; /* ": " */
+                total_len += htp_header_value_len(h);
+                total_len += 2; /* "\r\n" */
+            }
+        }
+    }
+
+    if (total_len > 0)
+        total_len += 2; /* final blank line "\r\n" separating headers from body */
+    return total_len;
+}
+
+/* Request line is stored WITHOUT trailing CRLF (chomped by libhtp-rs). */
+static uint64_t HttpCalculateRequestHeaderLength(htp_tx_t *tx)
+{
+    return HttpCalculateHeaderLength(
+            htp_tx_request_line(tx), false, htp_tx_request_headers(tx));
+}
+
+/* Response line is stored WITH trailing CRLF (NOT chomped by libhtp-rs). */
+static uint64_t HttpCalculateResponseHeaderLength(htp_tx_t *tx)
+{
+    return HttpCalculateHeaderLength(
+            htp_tx_response_line(tx), true, htp_tx_response_headers(tx));
+}
+
 static void JsonHttpLogJSONAWN(SCJsonBuilder *js, htp_tx_t *tx, Flow *f, uint64_t tx_id, magic_t magic_ctx)
 {
-    SCJbSetUint(js, "request_total_length", htp_tx_request_message_len(tx));
-    SCJbSetUint(js, "response_total_length", htp_tx_response_message_len(tx));
+    // (For reference) Previous implementation of `request_total_length` and `response_total_length`
+    // 
+    // SCJbSetUint(js, "request_total_length", htp_tx_request_message_len(tx));
+    // SCJbSetUint(js, "response_total_length", htp_tx_response_message_len(tx));
+    
+    /* Calculate full message length (headers + body) to match Suricata 6.0.18-awn semantics.
+     * libhtp-rs request_message_len / response_message_len only count the body; we add the
+     * header length ourselves to restore the original meaning of *_total_length. */
+    uint64_t request_header_len = HttpCalculateRequestHeaderLength(tx);
+    int64_t request_body_len = htp_tx_request_message_len(tx);
+    uint64_t request_total_len = request_header_len + (request_body_len > 0 ? (uint64_t)request_body_len : 0);
+
+    uint64_t response_header_len = HttpCalculateResponseHeaderLength(tx);
+    int64_t response_body_len = htp_tx_response_message_len(tx);
+    uint64_t response_total_len = response_header_len + (response_body_len > 0 ? (uint64_t)response_body_len : 0);
+
+    SCJbSetUint(js, "request_total_length", request_total_len);
+    SCJbSetUint(js, "response_total_length", response_total_len);
     
     /* Fields pertaining to payload */
     if(!SCJbOpenObject(js, "payload")) {

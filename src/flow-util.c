@@ -238,7 +238,14 @@ void FlowInitFromFlow(ThreadVars *tv, Flow* f, const Flow* old_f, const Packet* 
     // Copy only the direction bit, not all flags to avoid carrying over
     // app-layer state flags that prevent logging (AWN-78421)
     f->flags = old_f->flags & FLOW_DIR_REVERSED;
-
+    if (PacketIsIPv4(p)) {
+        f->flags |= FLOW_IPV4;
+    } else if (PacketIsIPv6(p)) {
+        f->flags |= FLOW_IPV6;
+    } else {
+        SCLogDebug("neither IPv4 or IPv6, weird");
+        DEBUG_VALIDATE_BUG_ON(1);
+    }
     f->flow_hash = old_f->flow_hash;
 
     //reset ttl and let it re-calculate it from packets in new flow.

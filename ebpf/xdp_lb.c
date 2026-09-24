@@ -173,6 +173,7 @@ static INLINE void stats_incr_l2(__u16 h_proto)
         __u64 init = 1;
         bpf_map_update_elem(&l2_proto_stats, &h_proto, &init, BPF_ANY);
     }
+    DPRINTF("stats l2 etype 0x%x\n", __builtin_bswap16(h_proto));
 }
 
 /* Increment IP protocol/port counter if (proto, dport) is in the config whitelist.
@@ -197,6 +198,7 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
         __u64 init = 1;
         bpf_map_update_elem(&ip_proto_stats, &key, &init, BPF_ANY);
     }
+    DPRINTF("stats ip proto %d port %d\n", proto, port_hbo);
 }
 
 static int INLINE hash_ipv4(struct xdp_md *ctx, void *data, void *data_end, __u16 vlan0, __u16 vlan1)

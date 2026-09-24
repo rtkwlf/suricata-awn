@@ -88,13 +88,15 @@ struct {
 
 /* Stats maps
  *
- *   l2_proto_stats   PERCPU_HASH  key = EtherType (native byte order, __u16)  value = u64
+ *   l2_proto_stats   PERCPU_HASH  key = EtherType (native byte order, __u16)
+ *                                value = struct ot_stat { count, last_updated_ns }
  *                    Counts packets per EtherType after VLAN/802.1ah stripping.
  *                    Only populated for EtherTypes present in l2_proto_config.
  *                    Covers L2 OT protocols (EtherCAT 0x88A4, Profinet 0x8892,
  *                    GOOSE 0x88B8, etc.) as well as IPv4/IPv6.
  *
- *   ip_proto_stats   PERCPU_HASH  key = (ip_proto << 16) | dport  value = u64
+ *   ip_proto_stats   PERCPU_HASH  key = (ip_proto << 16) | dport
+ *                                value = struct ot_stat { count, last_updated_ns }
  *                    Counts TCP/UDP packets per protocol/destination-port pair.
  *                    Only populated for entries present in ip_proto_config.
  *                    Covers IP-based OT protocols (Modbus TCP:502, DNP3:20000,
@@ -107,14 +109,14 @@ struct {
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __type(key, __u16);
-    __type(value, __u64);
+    __type(value, struct ot_stat);
     __uint(max_entries, 100);
 } l2_proto_stats SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __type(key, __u32);
-    __type(value, __u64);
+    __type(value, struct ot_stat);
     __uint(max_entries, 8192);
 } ip_proto_stats SEC(".maps");
 
@@ -166,11 +168,13 @@ static INLINE void stats_incr_l2(__u16 h_proto)
     if (!enabled)
         return;
 
-    __u64 *cnt = bpf_map_lookup_elem(&l2_proto_stats, &h_proto);
-    if (cnt) {
-        (*cnt)++;
+    __u64 now = bpf_ktime_get_ns();
+    struct ot_stat *s = bpf_map_lookup_elem(&l2_proto_stats, &h_proto);
+    if (s) {
+        s->count++;
+        s->last_updated_ns = now;
     } else {
-        __u64 init = 1;
+        struct ot_stat init = { .count = 1, .last_updated_ns = now };
         bpf_map_update_elem(&l2_proto_stats, &h_proto, &init, BPF_ANY);
     }
     DPRINTF("stats l2 etype 0x%x\n", __builtin_bswap16(h_proto));
@@ -191,11 +195,13 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
     if (!enabled)
         return;
 
-    __u64 *cnt = bpf_map_lookup_elem(&ip_proto_stats, &key);
-    if (cnt) {
-        (*cnt)++;
+    __u64 now = bpf_ktime_get_ns();
+    struct ot_stat *s = bpf_map_lookup_elem(&ip_proto_stats, &key);
+    if (s) {
+        s->count++;
+        s->last_updated_ns = now;
     } else {
-        __u64 init = 1;
+        struct ot_stat init = { .count = 1, .last_updated_ns = now };
         bpf_map_update_elem(&ip_proto_stats, &key, &init, BPF_ANY);
     }
     DPRINTF("stats ip proto %d port %d\n", proto, port_hbo);

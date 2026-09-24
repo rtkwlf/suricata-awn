@@ -446,10 +446,14 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
 
             int existing_fd = bpf_obj_get(pinpath);
             if (existing_fd >= 0) {
-                SCLogConfig("Reusing pinned map '%s' (fd %d)",
-                            bpf_map__name(map), existing_fd);
-                bpf_map__reuse_fd(map, existing_fd);
+                int reuse_err = bpf_map__reuse_fd(map, existing_fd);
                 close(existing_fd);
+                if (reuse_err != 0) {
+                    SCLogWarning("%s: failed to reuse pinned map '%s' (err %d), "
+                                 "discarding pin and starting fresh",
+                                 iface, bpf_map__name(map), reuse_err);
+                    unlink(pinpath);
+                }
             } else {
                 SCLogWarning("%s: stale pin for map '%s', removing",
                              iface, bpf_map__name(map));
@@ -519,14 +523,18 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
                     bpf_map_data->array[bpf_map_data->last].name);
             if (access(buf, F_OK) == 0) {
                 /* Pin file already exists — map was reused; no need to re-pin */
-                SCLogConfig("Reused pinned map '%s', skipping pin",
-                            bpf_map_data->array[bpf_map_data->last].name);
+                SCLogInfo("[AWN] map '%s': pin exists, skipping re-pin (fd=%d)",
+                          bpf_map_data->array[bpf_map_data->last].name,
+                          bpf_map_data->array[bpf_map_data->last].fd);
             } else {
-                SCLogConfig("Pinning: %d to %s", bpf_map_data->array[bpf_map_data->last].fd,
-                        bpf_map_data->array[bpf_map_data->last].name);
+                SCLogInfo("[AWN] map '%s': no pin, pinning fd=%d to %s",
+                          bpf_map_data->array[bpf_map_data->last].name,
+                          bpf_map_data->array[bpf_map_data->last].fd, buf);
                 int ret = bpf_obj_pin(bpf_map_data->array[bpf_map_data->last].fd, buf);
                 if (ret != 0) {
-                    SCLogWarning("Can not pin: %s", strerror(errno));
+                    SCLogWarning("[AWN] map '%s': can not pin: %s",
+                                 bpf_map_data->array[bpf_map_data->last].name,
+                                 strerror(errno));
                 }
             }
             /* Don't unlink pinned maps in XDP mode to avoid a state reset */

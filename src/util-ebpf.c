@@ -33,6 +33,7 @@
 #define SC_PCAP_DONT_INCLUDE_PCAP_H 1
 
 #include "suricata-common.h"
+#include "../ebpf/ot_meta.h"
 #include "flow-bypass.h"
 
 #ifdef HAVE_PACKET_EBPF
@@ -392,6 +393,74 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
         return -1;
     }
 
+    /* Reuse any already-pinned maps before loading so the new program shares
+     * the same map FDs as the previous run.  This preserves config entries and
+     * stats across Suricata restarts.  libbpf validates type/key/value size
+     * compatibility during bpf_object__load(); mismatches cause a load failure
+     * rather than silent data corruption.
+     *
+     * For OT data maps, the stored schema version in ot_meta_map is checked
+     * against OT_SCHEMA_VERSION.  A mismatch means the map layout changed —
+     * the pin file is removed so a fresh map is created and re-pinned. */
+    if (config->flags & EBPF_PINNED_MAPS) {
+        /* Open the pinned meta map to check schema versions.  May not exist
+         * on first run or before ot_meta_map was introduced — that's fine,
+         * we fall back to unconditional reuse in that case. */
+        int meta_fd = -1;
+        char meta_pinpath[PATH_MAX];
+        snprintf(meta_pinpath, sizeof(meta_pinpath), "/sys/fs/bpf/suricata-%s-ot_meta_map",
+                 iface);
+        if (access(meta_pinpath, F_OK) == 0) {
+            meta_fd = bpf_obj_get(meta_pinpath);
+        }
+
+        bpf_map__for_each(map, bpfobj) {
+            char pinpath[PATH_MAX];
+            snprintf(pinpath, sizeof(pinpath), "/sys/fs/bpf/suricata-%s-%s",
+                     iface, bpf_map__name(map));
+            if (access(pinpath, F_OK) != 0)
+                continue;
+
+            /* Check schema version for known OT data maps. */
+            if (meta_fd >= 0) {
+                const char *mapname = bpf_map__name(map);
+                bool has_ot_id = true;
+                __u32 ot_id = 0;
+                if      (strcmp(mapname, "l2_proto_config") == 0) ot_id = OT_MAP_L2_PROTO_CONFIG;
+                else if (strcmp(mapname, "l2_proto_stats")  == 0) ot_id = OT_MAP_L2_PROTO_STATS;
+                else if (strcmp(mapname, "ip_proto_config") == 0) ot_id = OT_MAP_IP_PROTO_CONFIG;
+                else if (strcmp(mapname, "ip_proto_stats")  == 0) ot_id = OT_MAP_IP_PROTO_STATS;
+                else has_ot_id = false;
+
+                if (has_ot_id) {
+                    struct ot_map_meta m = {};
+                    if (bpf_map_lookup_elem(meta_fd, &ot_id, &m) == 0 &&
+                            m.schema_version != OT_SCHEMA_VERSION) {
+                        SCLogInfo("%s: map '%s' schema v%u != current v%u, discarding pin",
+                                  iface, mapname, m.schema_version, OT_SCHEMA_VERSION);
+                        unlink(pinpath);
+                        continue;
+                    }
+                }
+            }
+
+            int existing_fd = bpf_obj_get(pinpath);
+            if (existing_fd >= 0) {
+                SCLogConfig("Reusing pinned map '%s' (fd %d)",
+                            bpf_map__name(map), existing_fd);
+                bpf_map__reuse_fd(map, existing_fd);
+                close(existing_fd);
+            } else {
+                SCLogWarning("%s: stale pin for map '%s', removing",
+                             iface, bpf_map__name(map));
+                unlink(pinpath);
+            }
+        }
+
+        if (meta_fd >= 0)
+            close(meta_fd);
+    }
+
     err = bpf_object__load(bpfobj);
     if (err < 0) {
         if (err == -EPERM) {
@@ -403,6 +472,19 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
             SCLogError("Unable to load eBPF object: %s (%d)", buf, err);
         }
         return -1;
+    }
+
+    /* Write schema version to ot_meta_map if present.  OT_SCHEMA_VERSION and
+     * OT_MAP_COUNT come from ebpf/ot_meta.h — single source of truth. */
+    {
+        struct bpf_map *meta_map = bpf_object__find_map_by_name(bpfobj, "ot_meta_map");
+        if (meta_map) {
+            int meta_fd = bpf_map__fd(meta_map);
+            struct ot_map_meta m = { .schema_version = OT_SCHEMA_VERSION };
+            for (__u32 key = 0; key < OT_MAP_COUNT; key++) {
+                bpf_map_update_elem(meta_fd, &key, &m, BPF_ANY);
+            }
+        }
     }
 
     /* Kernel and userspace are sharing data via map. Userspace access to the
@@ -432,14 +514,20 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
         }
         bpf_map_data->array[bpf_map_data->last].to_unlink = 0;
         if (config->flags & EBPF_PINNED_MAPS) {
-            SCLogConfig("Pinning: %d to %s", bpf_map_data->array[bpf_map_data->last].fd,
-                    bpf_map_data->array[bpf_map_data->last].name);
             char buf[1024];
             snprintf(buf, sizeof(buf), "/sys/fs/bpf/suricata-%s-%s", iface,
                     bpf_map_data->array[bpf_map_data->last].name);
-            int ret = bpf_obj_pin(bpf_map_data->array[bpf_map_data->last].fd, buf);
-            if (ret != 0) {
-                SCLogWarning("Can not pin: %s", strerror(errno));
+            if (access(buf, F_OK) == 0) {
+                /* Pin file already exists — map was reused; no need to re-pin */
+                SCLogConfig("Reused pinned map '%s', skipping pin",
+                            bpf_map_data->array[bpf_map_data->last].name);
+            } else {
+                SCLogConfig("Pinning: %d to %s", bpf_map_data->array[bpf_map_data->last].fd,
+                        bpf_map_data->array[bpf_map_data->last].name);
+                int ret = bpf_obj_pin(bpf_map_data->array[bpf_map_data->last].fd, buf);
+                if (ret != 0) {
+                    SCLogWarning("Can not pin: %s", strerror(errno));
+                }
             }
             /* Don't unlink pinned maps in XDP mode to avoid a state reset */
             if (config->flags & EBPF_XDP_CODE) {

@@ -35,6 +35,7 @@
 #include "hash_func01.h"
 #include "network_headers.h"
 #include "xdp_common.h"
+#include "ot_meta.h"
 
 #ifdef ENABLE_EAST_WEST_FILTER
 #include "east_west_filter.h"
@@ -85,6 +86,127 @@ struct {
     __uint(max_entries, 1);
 } cpus_count SEC(".maps");
 
+/* Stats maps
+ *
+ *   l2_proto_stats   PERCPU_HASH  key = EtherType (native byte order, __u16)
+ *                                value = struct ot_stat { count, last_updated_ns }
+ *                    Counts packets per EtherType after VLAN/802.1ah stripping.
+ *                    Only populated for EtherTypes present in l2_proto_config.
+ *                    Covers L2 OT protocols (EtherCAT 0x88A4, Profinet 0x8892,
+ *                    GOOSE 0x88B8, etc.) as well as IPv4/IPv6.
+ *
+ *   ip_proto_stats   PERCPU_HASH  key = (ip_proto << 16) | dport
+ *                                value = struct ot_stat { count, last_updated_ns }
+ *                    Counts TCP/UDP packets per protocol/destination-port pair.
+ *                    Only populated for entries present in ip_proto_config.
+ *                    Covers IP-based OT protocols (Modbus TCP:502, DNP3:20000,
+ *                    EtherNet/IP TCP:44818, BACnet UDP:47808, etc.)
+ *
+ * Both maps are per-CPU; sum across CPUs for totals:
+ *   bpftool map dump name l2_proto_stats
+ *   bpftool map dump name ip_proto_stats
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+    __type(key, __u16);
+    __type(value, struct ot_stat);
+    __uint(max_entries, 100);
+} l2_proto_stats SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+    __type(key, __u32);
+    __type(value, struct ot_stat);
+    __uint(max_entries, 8192);
+} ip_proto_stats SEC(".maps");
+
+/* Config maps (whitelist) — populate from userspace before loading.
+ * Empty = track nothing.  Add an entry to start counting that EtherType or port.
+ *
+ *   l2_proto_config  key = EtherType (native byte order, __u16)        value = __u8 (1)
+ *   ip_proto_config  key = (ip_proto << 16) | dport (__u32)            value = __u8 (1)
+ *
+ * Examples (bpftool, using decimal byte values):
+ *   # Track Profinet RT (0x8892): 0x88=136, 0x92=146
+ *   bpftool map update name l2_proto_config key 136 146 value 01
+ *   # Track Modbus TCP (proto=6, port=502): key MSB-first: 0x00 0x06 0x01 0xf6
+ *   bpftool map update name ip_proto_config key 0x00 0x06 0x01 0xf6 value 01
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u16);
+    __type(value, __u8);
+    __uint(max_entries, 100);
+} l2_proto_config SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);
+    __type(value, __u8);
+    __uint(max_entries, 8192);
+} ip_proto_config SEC(".maps");
+
+/* Schema versioning — ot_meta_map holds one entry per data map so userspace
+ * consumers can verify map layout compatibility before reading stats or config.
+ * Version constant, map ID enum, and struct defined in ot_meta.h.
+ * Bump OT_SCHEMA_VERSION in ot_meta.h whenever any map's key or value layout changes.
+ *
+ * bpftool map dump name ot_meta_map
+ */
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);
+    __type(value, struct ot_map_meta);
+    __uint(max_entries, 16);
+} ot_meta_map SEC(".maps");
+
+/* Increment L2 counter if h_proto is in the config whitelist. */
+static INLINE void stats_incr_l2(__u16 h_proto)
+{
+    __u8 *enabled = bpf_map_lookup_elem(&l2_proto_config, &h_proto);
+    if (!enabled)
+        return;
+
+    __u64 now = bpf_ktime_get_ns();
+    struct ot_stat *s = bpf_map_lookup_elem(&l2_proto_stats, &h_proto);
+    if (s) {
+        s->count++;
+        s->last_updated_ns = now;
+    } else {
+        struct ot_stat init = { .count = 1, .last_updated_ns = now };
+        bpf_map_update_elem(&l2_proto_stats, &h_proto, &init, BPF_ANY);
+    }
+    DPRINTF("stats l2 etype 0x%x\n", __builtin_bswap16(h_proto));
+}
+
+/* Increment IP protocol/port counter if (proto, dport) is in the config whitelist.
+ * Key encoding: upper 16 bits = ip_proto, lower 16 bits = dport (host byte order).
+ * dport_nbo is in network byte order as returned by get_dport(). */
+static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
+{
+    if (dport_nbo <= 0)
+        return;
+
+    __u16 port_hbo = __builtin_bswap16((__u16)dport_nbo);
+    __u32 key = __builtin_bswap32(((__u32)proto << 16) | port_hbo);
+
+    __u8 *enabled = bpf_map_lookup_elem(&ip_proto_config, &key);
+    if (!enabled)
+        return;
+
+    __u64 now = bpf_ktime_get_ns();
+    struct ot_stat *s = bpf_map_lookup_elem(&ip_proto_stats, &key);
+    if (s) {
+        s->count++;
+        s->last_updated_ns = now;
+    } else {
+        struct ot_stat init = { .count = 1, .last_updated_ns = now };
+        bpf_map_update_elem(&ip_proto_stats, &key, &init, BPF_ANY);
+    }
+    DPRINTF("stats ip proto %d port %d\n", proto, port_hbo);
+}
+
 static int INLINE hash_ipv4(struct xdp_md *ctx, void *data, void *data_end, __u16 vlan0, __u16 vlan1)
 {
     DPRINTF("hash_ipv4 %d\n", (int)(data_end - data));
@@ -116,6 +238,9 @@ static int INLINE hash_ipv4(struct xdp_md *ctx, void *data, void *data_end, __u1
     if (sport == -1) {
         return XDP_PASS;
     }
+
+    if (iph->protocol == IPPROTO_TCP || iph->protocol == IPPROTO_UDP)
+        stats_incr_ip(iph->protocol, dport);
 
     DPRINTF("Flow proto  %d id %d\n", iph->protocol, iph->id);
     DPRINTF("     src %x:%d\n", iph->saddr, __constant_htons(sport));
@@ -196,6 +321,9 @@ static int INLINE hash_ipv6(struct xdp_md *ctx, void *data, void *data_end, __u1
     if (sport == -1) {
         return XDP_PASS;
     }
+
+    if (ip6h->nexthdr == IPPROTO_TCP || ip6h->nexthdr == IPPROTO_UDP)
+        stats_incr_ip(ip6h->nexthdr, dport);
 
     __u32 key0 = 0;
     __u32 cpu_dest;
@@ -388,8 +516,72 @@ static int INLINE filter_ipv6(struct xdp_md *ctx, void *data, __u64 nh_off, void
     return hash_ipv6(ctx, (void *)ip6h, data_end, vlan0, vlan1);
 }
 
-/* xdp_loadfilter() implementation */
-#include "xdp_load_filter.h"
+int SEC("xdp") xdp_loadfilter(struct xdp_md *ctx)
+{
+    void *data_end = CTX_GET_DATA_END(ctx);
+    void *data = CTX_GET_DATA(ctx);
+    struct ethhdr *eth = data;
+    __u16 h_proto;
+    __u64 nh_off;
+
+    __u16 vlan0 = 0;
+    __u16 vlan1 = 0;
+
+    DPRINTF("Packet %d len\n", (int)(data_end - data));
+
+    nh_off = sizeof(*eth);
+    if (data + nh_off > data_end) {
+        return XDP_PASS;
+    }
+
+    h_proto = eth->h_proto;
+
+    if (h_proto == __constant_htons(ETH_P_8021Q) || h_proto == __constant_htons(ETH_P_8021AD)) {
+        struct vlan_hdr *vhdr;
+
+        vhdr = data + nh_off;
+        nh_off += sizeof(struct vlan_hdr);
+        if (data + nh_off > data_end)
+            return XDP_PASS;
+        h_proto = vhdr->h_vlan_encapsulated_proto;
+        vlan0 = vhdr->h_vlan_TCI & 0x0fff;
+        DPRINTF("nh_off %x vhdr->h_vlan_TCI %x\n", nh_off, vhdr->h_vlan_TCI);
+        DPRINTF("vlan0 %x\n", vlan0);
+    }
+    if (h_proto == __constant_htons(0x88e7)) {
+        IEEE8021ahHdr *hdr;
+
+        hdr = data + nh_off;
+        nh_off += sizeof(IEEE8021ahHdr);
+        if (data + nh_off > data_end)
+            return XDP_PASS;
+
+        h_proto = hdr->type;
+        DPRINTF("802.1ah next header %x\n", __constant_htons(h_proto));
+    }
+    if (h_proto == __constant_htons(ETH_P_8021Q) || h_proto == __constant_htons(ETH_P_8021AD)) {
+        struct vlan_hdr *vhdr;
+
+        vhdr = data + nh_off;
+        nh_off += sizeof(struct vlan_hdr);
+        if (data + nh_off > data_end)
+            return XDP_PASS;
+        h_proto = vhdr->h_vlan_encapsulated_proto;
+        vlan1 = vhdr->h_vlan_TCI & 0x0fff;
+        DPRINTF("vlan1 %x\n", vlan1);
+    }
+
+    stats_incr_l2(h_proto);
+
+    if (h_proto == __constant_htons(ETH_P_IP)) {
+        return filter_ipv4(ctx, data, nh_off, data_end, vlan0, vlan1);
+    }
+    else if (h_proto == __constant_htons(ETH_P_IPV6)) {
+        return filter_ipv6(ctx, data, nh_off, data_end, vlan0, vlan1);
+    }
+
+    return XDP_PASS;
+}
 
 char __license[] SEC("license") = "GPL";
 

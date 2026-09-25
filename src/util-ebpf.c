@@ -523,16 +523,16 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
                     bpf_map_data->array[bpf_map_data->last].name);
             if (access(buf, F_OK) == 0) {
                 /* Pin file already exists — map was reused; no need to re-pin */
-                SCLogInfo("[AWN] map '%s': pin exists, skipping re-pin (fd=%d)",
+                SCLogInfo("map '%s': pin exists, skipping re-pin (fd=%d)",
                           bpf_map_data->array[bpf_map_data->last].name,
                           bpf_map_data->array[bpf_map_data->last].fd);
             } else {
-                SCLogInfo("[AWN] map '%s': no pin, pinning fd=%d to %s",
+                SCLogInfo("map '%s': no pin, pinning fd=%d to %s",
                           bpf_map_data->array[bpf_map_data->last].name,
                           bpf_map_data->array[bpf_map_data->last].fd, buf);
                 int ret = bpf_obj_pin(bpf_map_data->array[bpf_map_data->last].fd, buf);
                 if (ret != 0) {
-                    SCLogWarning("[AWN] map '%s': can not pin: %s",
+                    SCLogWarning("map '%s': can not pin: %s",
                                  bpf_map_data->array[bpf_map_data->last].name,
                                  strerror(errno));
                 }

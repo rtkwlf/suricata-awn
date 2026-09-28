@@ -57,7 +57,7 @@
 #include <net/if.h>
 #include "autoconf.h"
 
-#define BPF_MAP_MAX_COUNT 16
+#define BPF_MAP_MAX_COUNT 32
 
 #define BYPASSED_FLOW_TIMEOUT   60
 
@@ -80,6 +80,30 @@ typedef struct BypassedIfaceList_ {
     LiveDevice *dev;
     struct BypassedIfaceList_ *next;
 } BypassedIfaceList;
+
+/* Check if a map name is in the OT registry (should be pinned) */
+static bool ShouldPinMap(const char *mapname)
+{
+    /* Check against the data maps in the registry */
+    for (int i = 0; i < OT_MAP_REGISTRY_COUNT; i++) {
+        if (strcmp(mapname, ot_map_registry[i].name) == 0)
+            return true;
+    }
+    /* Also pin the metadata map */
+    if (strcmp(mapname, "ot_meta_map") == 0)
+        return true;
+    return false;
+}
+
+/* Get the OT map ID for a given map name, or return -1 if not an OT data map */
+static int GetOTMapId(const char *mapname)
+{
+    for (int i = 0; i < OT_MAP_REGISTRY_COUNT; i++) {
+        if (strcmp(mapname, ot_map_registry[i].name) == 0)
+            return (__u32)ot_map_registry[i].id;
+    }
+    return -1;
+}
 
 static void BpfMapsInfoFree(void *bpf)
 {
@@ -424,15 +448,8 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
             /* Check schema version for known OT data maps. */
             if (meta_fd >= 0) {
                 const char *mapname = bpf_map__name(map);
-                bool has_ot_id = true;
-                __u32 ot_id = 0;
-                if      (strcmp(mapname, "l2_proto_config") == 0) ot_id = OT_MAP_L2_PROTO_CONFIG;
-                else if (strcmp(mapname, "l2_proto_stats")  == 0) ot_id = OT_MAP_L2_PROTO_STATS;
-                else if (strcmp(mapname, "ip_proto_config") == 0) ot_id = OT_MAP_IP_PROTO_CONFIG;
-                else if (strcmp(mapname, "ip_proto_stats")  == 0) ot_id = OT_MAP_IP_PROTO_STATS;
-                else has_ot_id = false;
-
-                if (has_ot_id) {
+                int ot_id = GetOTMapId(mapname);
+                if (ot_id >= 0) {
                     struct ot_map_meta m = {};
                     if (bpf_map_lookup_elem(meta_fd, &ot_id, &m) == 0 &&
                             m.schema_version != OT_SCHEMA_VERSION) {
@@ -517,7 +534,7 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
             return -1;
         }
         bpf_map_data->array[bpf_map_data->last].to_unlink = 0;
-        if (config->flags & EBPF_PINNED_MAPS) {
+        if (config->flags & EBPF_PINNED_MAPS && ShouldPinMap(bpf_map_data->array[bpf_map_data->last].name)) {
             char buf[1024];
             snprintf(buf, sizeof(buf), "/sys/fs/bpf/suricata-%s-%s", iface,
                     bpf_map_data->array[bpf_map_data->last].name);

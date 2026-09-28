@@ -34,4 +34,22 @@ struct ot_stat {
     __u64 last_updated_ns;
 };
 
+/* Central registry of OT maps: name → ID mapping. Used by util-ebpf.c to:
+ * 1. Determine which maps should be pinned
+ * 2. Look up the OT map ID for schema version checks
+ * This is the single source of truth for OT map configuration. */
+struct ot_map_registry_entry {
+    const char *name;
+    __u32 id;
+};
+
+static const struct ot_map_registry_entry ot_map_registry[] = {
+    { "l2_proto_config", OT_MAP_L2_PROTO_CONFIG },
+    { "l2_proto_stats", OT_MAP_L2_PROTO_STATS },
+    { "ip_proto_config", OT_MAP_IP_PROTO_CONFIG },
+    { "ip_proto_stats", OT_MAP_IP_PROTO_STATS },
+};
+
+#define OT_MAP_REGISTRY_COUNT (sizeof(ot_map_registry) / sizeof(ot_map_registry[0]))
+
 #endif /* OT_META_H */

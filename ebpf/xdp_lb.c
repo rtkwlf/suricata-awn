@@ -120,36 +120,56 @@ struct {
     __uint(max_entries, 8192);
 } ip_proto_stats SEC(".maps");
 
-/* Config maps (whitelist) — populate from userspace before loading.
- * Empty = track nothing.  Add an entry to start counting that EtherType or port.
+/* Config map (whitelist) — unified for both L2 and L3 protocols.
+ * Key encoding: (type << 31) | proto_id
+ *   type=0 → L2: proto_id = ethertype (__u16, padded to 31 bits)
+ *   type=1 → L3: proto_id = (protocol << 16) | port (MSB-first)
+ * Value: __u8 (1 = enabled)
  *
- *   l2_proto_config  key = EtherType (native byte order, __u16)        value = __u8 (1)
- *   ip_proto_config  key = (ip_proto << 16) | dport (__u32)            value = __u8 (1)
- *
- * Examples (bpftool, using decimal byte values):
- *   # Track Profinet RT (0x8892): 0x88=136, 0x92=146
- *   bpftool map update name l2_proto_config key 136 146 value 01
- *   # Track Modbus TCP (proto=6, port=502): key MSB-first: 0x00 0x06 0x01 0xf6
- *   bpftool map update name ip_proto_config key 0x00 0x06 0x01 0xf6 value 01
+ * Pinned map; external program replaces pin and increments ot_config_generation_id
+ * when new config is ready. Suricata picks up the new pin on restart.
+ * Accessed indirectly through ot_proto_cfg[0] for atomic config swaps.
  */
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, __u16);
-    __type(value, __u8);
-    __uint(max_entries, 100);
-} l2_proto_config SEC(".maps");
-
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u32);
     __type(value, __u8);
-    __uint(max_entries, 8192);
-} ip_proto_config SEC(".maps");
+    __uint(max_entries, 8292); /* 100 L2 + 8192 L3 */
+} ot_proto_cfg_inr SEC(".maps");
+
+/* Outer array holding FD to current config map.
+ * XDP always reads ot_proto_cfg[0] to get current inner map FD.
+ * External program updates ot_proto_cfg[0] atomically when new config is ready.
+ * Pinned map; util-ebpf refreshes the inner FD on restart.
+ *
+ * inner_map_fd is set explicitly by util-ebpf.c via bpf_map__set_inner_map_fd()
+ * before bpf_object__load(), because Clang 10 does not reliably emit BTF for
+ * __array(values,...) in a way that libbpf 0.8 can use to auto-wire the prototype.
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY_OF_MAPS);
+    __uint(key_size, 4);
+    __uint(value_size, 4);
+    __uint(max_entries, 1);
+} ot_proto_cfg SEC(".maps");
+
+/* Config generation ID — incremented by external program after config entries
+ * are fully written, so consumers can detect a completed update without polling.
+ * Type: ARRAY with 1 entry (key=0, value=u64 counter).
+ * Pinned map; reset to 0 by Suricata on startup.
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, __u64);
+    __uint(max_entries, 1);
+} ot_config_generation_id SEC(".maps");
 
 /* Schema versioning — ot_meta_map holds one entry per data map so userspace
  * consumers can verify map layout compatibility before reading stats or config.
- * Version constant, map ID enum, and struct defined in ot_meta.h.
- * Bump OT_SCHEMA_VERSION in ot_meta.h whenever any map's key or value layout changes.
+ * Each map has its own schema version in ot_meta.h (OT_SCHEMA_VERSION_*).
+ * Maps can evolve independently; bump the specific map's version if its layout changes.
+ * util-ebpf.c writes all versions to ot_meta_map[0..2] on startup.
  *
  * bpftool map dump name ot_meta_map
  */
@@ -164,7 +184,13 @@ struct {
 /* Increment L2 counter if h_proto is in the config whitelist. */
 static INLINE void stats_incr_l2(__u16 h_proto)
 {
-    __u8 *enabled = bpf_map_lookup_elem(&l2_proto_config, &h_proto);
+    __u32 key0 = 0;
+    void *config_map = bpf_map_lookup_elem(&ot_proto_cfg, &key0);
+    if (!config_map)
+        return;
+
+    __u32 cfg_key = (0U << 31) | (__u32)h_proto;  /* type=0 for L2 */
+    __u8 *enabled = bpf_map_lookup_elem(config_map, &cfg_key);
     if (!enabled)
         return;
 
@@ -191,7 +217,13 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
     __u16 port_hbo = __builtin_bswap16((__u16)dport_nbo);
     __u32 key = __builtin_bswap32(((__u32)proto << 16) | port_hbo);
 
-    __u8 *enabled = bpf_map_lookup_elem(&ip_proto_config, &key);
+    __u32 key0 = 0;
+    void *config_map = bpf_map_lookup_elem(&ot_proto_cfg, &key0);
+    if (!config_map)
+        return;
+
+    __u32 cfg_key = (1U << 31) | key;  /* type=1 for L3 */
+    __u8 *enabled = bpf_map_lookup_elem(config_map, &cfg_key);
     if (!enabled)
         return;
 

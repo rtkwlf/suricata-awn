@@ -3,23 +3,24 @@
 
 #include <linux/types.h>
 
-/* OT_SCHEMA_VERSION — bump this whenever any OT stats or config map's key or
- * value layout changes (size, encoding, or field semantics).  All maps share
- * one version so userspace consumers have a single value to check.
+/* Independent schema versions for each OT data map.
+ * Each map can evolve independently. Bump a specific version when that map's
+ * key or value layout changes. Mismatch detection in util-ebpf.c discards stale pins.
  *
- * Current layout (v1):
- *   l2_proto_config / l2_proto_stats : key = __u16 EtherType (network byte order)
- *   ip_proto_config / ip_proto_stats : key = bswap32((proto << 16) | port), MSB-first
- *   stats value = struct ot_stat { __u64 count; __u64 last_updated_ns; }
+ * Map layouts (current):
+ *   l2_proto_stats : PERCPU_HASH, key=__u16 (EtherType), value=struct ot_stat
+ *   ip_proto_stats : PERCPU_HASH, key=__u32 ((proto<<16)|port MSB-first), value=struct ot_stat
+ *   ot_proto_cfg_inr : HASH, key=__u32 ((type<<31)|value), value=__u8
  */
-#define OT_SCHEMA_VERSION  1
+#define OT_SCHEMA_VERSION_L2_PROTO_STATS   1
+#define OT_SCHEMA_VERSION_IP_PROTO_STATS   1
+#define OT_SCHEMA_VERSION_CONFIG           1
 
 enum ot_map_id {
-    OT_MAP_L2_PROTO_CONFIG = 0,
-    OT_MAP_L2_PROTO_STATS  = 1,
-    OT_MAP_IP_PROTO_CONFIG = 2,
-    OT_MAP_IP_PROTO_STATS  = 3,
-    OT_MAP_COUNT           = 4,
+    OT_MAP_L2_PROTO_STATS  = 0,
+    OT_MAP_IP_PROTO_STATS  = 1,
+    OT_MAP_CONFIG          = 2,
+    OT_MAP_COUNT           = 3,
 };
 
 struct ot_map_meta {
@@ -44,9 +45,7 @@ struct ot_map_registry_entry {
 };
 
 static const struct ot_map_registry_entry ot_map_registry[] = {
-    { "l2_proto_config", OT_MAP_L2_PROTO_CONFIG },
     { "l2_proto_stats", OT_MAP_L2_PROTO_STATS },
-    { "ip_proto_config", OT_MAP_IP_PROTO_CONFIG },
     { "ip_proto_stats", OT_MAP_IP_PROTO_STATS },
 };
 

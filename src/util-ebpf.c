@@ -84,13 +84,16 @@ typedef struct BypassedIfaceList_ {
 /* Check if a map name is in the OT registry (should be pinned) */
 static bool ShouldPinMap(const char *mapname)
 {
-    /* Check against the data maps in the registry */
+    /* Check against the data maps in the registry (stats maps) */
     for (int i = 0; i < OT_MAP_REGISTRY_COUNT; i++) {
         if (strcmp(mapname, ot_map_registry[i].name) == 0)
             return true;
     }
-    /* Also pin the metadata map */
-    if (strcmp(mapname, "ot_meta_map") == 0)
+    /* Also pin the config maps, generation ID, and metadata map */
+    if (strcmp(mapname, "ot_proto_cfg_inr") == 0 ||
+        strcmp(mapname, "ot_proto_cfg") == 0 ||
+        strcmp(mapname, "ot_config_generation_id") == 0 ||
+        strcmp(mapname, "ot_meta_map") == 0)
         return true;
     return false;
 }
@@ -103,6 +106,18 @@ static int GetOTMapId(const char *mapname)
             return (__u32)ot_map_registry[i].id;
     }
     return -1;
+}
+
+/* Get the expected schema version for a given OT map name */
+static __u32 GetOTMapSchemaVersion(const char *mapname)
+{
+    if (strcmp(mapname, "l2_proto_stats") == 0)
+        return OT_SCHEMA_VERSION_L2_PROTO_STATS;
+    if (strcmp(mapname, "ip_proto_stats") == 0)
+        return OT_SCHEMA_VERSION_IP_PROTO_STATS;
+    if (strcmp(mapname, "ot_proto_cfg_inr") == 0)
+        return OT_SCHEMA_VERSION_CONFIG;
+    return 0;  /* Not an OT data map with versioning */
 }
 
 static void BpfMapsInfoFree(void *bpf)
@@ -449,12 +464,13 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
             if (meta_fd >= 0) {
                 const char *mapname = bpf_map__name(map);
                 int ot_id = GetOTMapId(mapname);
-                if (ot_id >= 0) {
+                __u32 expected_version = GetOTMapSchemaVersion(mapname);
+                if (ot_id >= 0 && expected_version > 0) {
                     struct ot_map_meta m = {};
                     if (bpf_map_lookup_elem(meta_fd, &ot_id, &m) == 0 &&
-                            m.schema_version != OT_SCHEMA_VERSION) {
-                        SCLogInfo("%s: map '%s' schema v%u != current v%u, discarding pin",
-                                  iface, mapname, m.schema_version, OT_SCHEMA_VERSION);
+                            m.schema_version != expected_version) {
+                        SCLogInfo("%s: map '%s' schema v%u != expected v%u, discarding pin",
+                                  iface, mapname, m.schema_version, expected_version);
                         unlink(pinpath);
                         continue;
                     }
@@ -482,6 +498,34 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
             close(meta_fd);
     }
 
+    /* Wire the inner map prototype for ot_proto_cfg (ARRAY_OF_MAPS) so the
+     * kernel receives a valid inner_map_fd when creating the outer map.
+     * Clang 10 + libbpf 0.8 do not reliably encode the __array() BTF hint,
+     * so we set it explicitly here.  If ot_proto_cfg was already reused from
+     * a pin this call is harmless — the stored fd is discarded at load time. */
+    {
+        struct bpf_map *cfg_outer = bpf_object__find_map_by_name(bpfobj, "ot_proto_cfg");
+        if (cfg_outer) {
+            /* Prototype has same key/value layout as ot_proto_cfg_inr.
+             * max_entries=1: the kernel only validates key_size/value_size. */
+            LIBBPF_OPTS(bpf_map_create_opts, proto_opts);
+            int proto_fd = bpf_map_create(BPF_MAP_TYPE_HASH, "ot_cfg_proto",
+                                          sizeof(__u32), sizeof(__u8), 1, &proto_opts);
+            if (proto_fd >= 0) {
+                int ret = bpf_map__set_inner_map_fd(cfg_outer, proto_fd);
+                if (ret != 0) {
+                    SCLogWarning("%s: [AWN] set inner_map_fd failed (%d), "
+                                 "ARRAY_OF_MAPS load may fail", iface, ret);
+                    close(proto_fd);
+                }
+                /* On success libbpf owns proto_fd and closes it on cleanup. */
+            } else {
+                SCLogWarning("%s: [AWN] failed to create ot_proto_cfg prototype (%d)",
+                             iface, errno);
+            }
+        }
+    }
+
     err = bpf_object__load(bpfobj);
     if (err < 0) {
         if (err == -EPERM) {
@@ -495,16 +539,64 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
         return -1;
     }
 
-    /* Write schema version to ot_meta_map if present.  OT_SCHEMA_VERSION and
-     * OT_MAP_COUNT come from ebpf/ot_meta.h — single source of truth. */
+    /* Write independent schema versions to ot_meta_map for each data map.
+     * Each map can evolve independently; versions come from ot_meta.h. */
     {
         struct bpf_map *meta_map = bpf_object__find_map_by_name(bpfobj, "ot_meta_map");
         if (meta_map) {
             int meta_fd = bpf_map__fd(meta_map);
-            struct ot_map_meta m = { .schema_version = OT_SCHEMA_VERSION };
-            for (__u32 key = 0; key < OT_MAP_COUNT; key++) {
-                bpf_map_update_elem(meta_fd, &key, &m, BPF_ANY);
+
+            /* Write schema version for l2_proto_stats */
+            __u32 key_l2 = OT_MAP_L2_PROTO_STATS;
+            struct ot_map_meta m_l2 = { .schema_version = OT_SCHEMA_VERSION_L2_PROTO_STATS };
+            bpf_map_update_elem(meta_fd, &key_l2, &m_l2, BPF_ANY);
+
+            /* Write schema version for ip_proto_stats */
+            __u32 key_ip = OT_MAP_IP_PROTO_STATS;
+            struct ot_map_meta m_ip = { .schema_version = OT_SCHEMA_VERSION_IP_PROTO_STATS };
+            bpf_map_update_elem(meta_fd, &key_ip, &m_ip, BPF_ANY);
+
+            /* Write schema version for ot_proto_cfg_inr (config map) */
+            __u32 key_cfg = OT_MAP_CONFIG;
+            struct ot_map_meta m_cfg = { .schema_version = OT_SCHEMA_VERSION_CONFIG };
+            bpf_map_update_elem(meta_fd, &key_cfg, &m_cfg, BPF_ANY);
+
+            SCLogInfo("%s: wrote schema versions: l2=%u ip=%u config=%u",
+                      iface,
+                      OT_SCHEMA_VERSION_L2_PROTO_STATS,
+                      OT_SCHEMA_VERSION_IP_PROTO_STATS,
+                      OT_SCHEMA_VERSION_CONFIG);
+        }
+    }
+
+    /* Refresh the inner map FD in ot_proto_cfg on restart.
+     * When ot_proto_cfg_inr is reused from a pin, it gets a new FD from the kernel.
+     * This FD must be updated in ot_proto_cfg[0] so XDP always reads the correct map. */
+    {
+        struct bpf_map *cfg_map = bpf_object__find_map_by_name(bpfobj, "ot_proto_cfg");
+        struct bpf_map *cfg_inr_map = bpf_object__find_map_by_name(bpfobj, "ot_proto_cfg_inr");
+        if (cfg_map && cfg_inr_map) {
+            int cfg_fd = bpf_map__fd(cfg_map);
+            int cfg_inr_fd = bpf_map__fd(cfg_inr_map);
+            __u32 key0 = 0;
+            if (bpf_map_update_elem(cfg_fd, &key0, &cfg_inr_fd, BPF_ANY) == 0) {
+                SCLogInfo("%s: refreshed ot_proto_cfg[0] → ot_proto_cfg_inr fd=%d",
+                          iface, cfg_inr_fd);
             }
+        }
+    }
+
+    /* Initialize config generation ID to 0 on startup.
+     * External programs increment this each time they update the config.
+     * Allows consumers to detect when config has been updated. */
+    {
+        struct bpf_map *gen_map = bpf_object__find_map_by_name(bpfobj, "ot_config_generation_id");
+        if (gen_map) {
+            int gen_fd = bpf_map__fd(gen_map);
+            __u32 key0 = 0;
+            __u64 gen_id = 0;
+            bpf_map_update_elem(gen_fd, &key0, &gen_id, BPF_ANY);
+            SCLogInfo("%s: initialized ot_config_generation_id[0] = 0", iface);
         }
     }
 

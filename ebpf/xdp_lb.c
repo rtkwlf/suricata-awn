@@ -184,7 +184,7 @@ struct {
 /* Increment L2 counter if h_proto is in the config whitelist. */
 static INLINE void stats_incr_l2(__u16 h_proto)
 {
-    __u32 cfg_key = (0U << 31) | (__u32)h_proto;  /* type=0 for L2 */
+    __u32 cfg_key = (0U << 31) | (__u32)__builtin_bswap16(h_proto);  /* type=0 for L2 */
 
     __u32 sel_key = 0;
     __u32 *sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);

@@ -8,19 +8,20 @@
  * key or value layout changes. Mismatch detection in util-ebpf.c discards stale pins.
  *
  * Map layouts (current):
- *   l2_proto_stats : PERCPU_HASH, key=__u16 (EtherType), value=struct ot_stat
- *   ip_proto_stats : PERCPU_HASH, key=__u32 ((proto<<16)|port MSB-first), value=struct ot_stat
- *   ot_proto_cfg_inr : HASH, key=__u32 ((type<<31)|value), value=__u8
+ *   l2_proto_stats  : PERCPU_HASH, key=__u16 (EtherType), value=struct ot_stat
+ *   ip_proto_stats  : PERCPU_HASH, key=__u32 ((proto<<16)|port MSB-first), value=struct ot_stat
+ *   ot_proto_cfg_a/b: HASH, key=__u32 ((type<<31)|value), value=__u8; double-buffered config
  */
 #define OT_SCHEMA_VERSION_L2_PROTO_STATS   1
 #define OT_SCHEMA_VERSION_IP_PROTO_STATS   1
-#define OT_SCHEMA_VERSION_CONFIG           1
+#define OT_SCHEMA_VERSION_CONFIG           1  /* applies to both cfg_a and cfg_b */
 
 enum ot_map_id {
     OT_MAP_L2_PROTO_STATS  = 0,
     OT_MAP_IP_PROTO_STATS  = 1,
-    OT_MAP_CONFIG          = 2,
-    OT_MAP_COUNT           = 3,
+    OT_MAP_CONFIG_A        = 2,
+    OT_MAP_CONFIG_B        = 3,
+    OT_MAP_COUNT           = 4,
 };
 
 struct ot_map_meta {
@@ -45,8 +46,10 @@ struct ot_map_registry_entry {
 };
 
 static const struct ot_map_registry_entry ot_map_registry[] = {
-    { "l2_proto_stats", OT_MAP_L2_PROTO_STATS },
-    { "ip_proto_stats", OT_MAP_IP_PROTO_STATS },
+    { "l2_proto_stats",  OT_MAP_L2_PROTO_STATS },
+    { "ip_proto_stats",  OT_MAP_IP_PROTO_STATS },
+    { "ot_proto_cfg_a",  OT_MAP_CONFIG_A },
+    { "ot_proto_cfg_b",  OT_MAP_CONFIG_B },
 };
 
 #define OT_MAP_REGISTRY_COUNT (sizeof(ot_map_registry) / sizeof(ot_map_registry[0]))

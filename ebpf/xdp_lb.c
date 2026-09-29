@@ -120,38 +120,38 @@ struct {
     __uint(max_entries, 8192);
 } ip_proto_stats SEC(".maps");
 
-/* Config map (whitelist) — unified for both L2 and L3 protocols.
+/* Double-buffered config maps (whitelist) — unified for both L2 and L3 protocols.
  * Key encoding: (type << 31) | proto_id
  *   type=0 → L2: proto_id = ethertype (__u16, padded to 31 bits)
  *   type=1 → L3: proto_id = (protocol << 16) | port (MSB-first)
  * Value: __u8 (1 = enabled)
  *
- * Pinned map; external program replaces pin and increments ot_config_generation_id
- * when new config is ready. Suricata picks up the new pin on restart.
- * Accessed indirectly through ot_proto_cfg[0] for atomic config swaps.
+ * External program writes the inactive buffer then flips ot_proto_cfg_sel[0].
+ * XDP reads sel[0] and branches to the compile-time map reference — no nested
+ * map lookup, so this works on all kernels from 4.1 (including kernel 5.4).
  */
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, __u32);
     __type(value, __u8);
     __uint(max_entries, 8292); /* 100 L2 + 8192 L3 */
-} ot_proto_cfg_inr SEC(".maps");
+} ot_proto_cfg_a SEC(".maps");
 
-/* Outer array holding FD to current config map.
- * XDP always reads ot_proto_cfg[0] to get current inner map FD.
- * External program updates ot_proto_cfg[0] atomically when new config is ready.
- * Pinned map; util-ebpf refreshes the inner FD on restart.
- *
- * inner_map_fd is set explicitly by util-ebpf.c via bpf_map__set_inner_map_fd()
- * before bpf_object__load(), because Clang 10 does not reliably emit BTF for
- * __array(values,...) in a way that libbpf 0.8 can use to auto-wire the prototype.
- */
 struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY_OF_MAPS);
-    __uint(key_size, 4);
-    __uint(value_size, 4);
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);
+    __type(value, __u8);
+    __uint(max_entries, 8292); /* 100 L2 + 8192 L3 */
+} ot_proto_cfg_b SEC(".maps");
+
+/* Selector: 0 → ot_proto_cfg_a is active, 1 → ot_proto_cfg_b is active.
+ * External program flips this after fully writing the inactive buffer. */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, __u32);
     __uint(max_entries, 1);
-} ot_proto_cfg SEC(".maps");
+} ot_proto_cfg_sel SEC(".maps");
 
 /* Config generation ID — incremented by external program after config entries
  * are fully written, so consumers can detect a completed update without polling.
@@ -169,7 +169,7 @@ struct {
  * consumers can verify map layout compatibility before reading stats or config.
  * Each map has its own schema version in ot_meta.h (OT_SCHEMA_VERSION_*).
  * Maps can evolve independently; bump the specific map's version if its layout changes.
- * util-ebpf.c writes all versions to ot_meta_map[0..2] on startup.
+ * util-ebpf.c writes all versions to ot_meta_map[0..3] on startup.
  *
  * bpftool map dump name ot_meta_map
  */
@@ -184,13 +184,15 @@ struct {
 /* Increment L2 counter if h_proto is in the config whitelist. */
 static INLINE void stats_incr_l2(__u16 h_proto)
 {
-    __u32 key0 = 0;
-    void *config_map = bpf_map_lookup_elem(&ot_proto_cfg, &key0);
-    if (!config_map)
-        return;
-
     __u32 cfg_key = (0U << 31) | (__u32)h_proto;  /* type=0 for L2 */
-    __u8 *enabled = bpf_map_lookup_elem(config_map, &cfg_key);
+
+    __u32 sel_key = 0;
+    __u32 *sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);
+    __u8 *enabled;
+    if (!sel || *sel == 0)
+        enabled = bpf_map_lookup_elem(&ot_proto_cfg_a, &cfg_key);
+    else
+        enabled = bpf_map_lookup_elem(&ot_proto_cfg_b, &cfg_key);
     if (!enabled)
         return;
 
@@ -217,13 +219,14 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
     __u16 port_hbo = __builtin_bswap16((__u16)dport_nbo);
     __u32 key = __builtin_bswap32(((__u32)proto << 16) | port_hbo);
 
-    __u32 key0 = 0;
-    void *config_map = bpf_map_lookup_elem(&ot_proto_cfg, &key0);
-    if (!config_map)
-        return;
-
+    __u32 sel_key = 0;
+    __u32 *sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);
     __u32 cfg_key = (1U << 31) | key;  /* type=1 for L3 */
-    __u8 *enabled = bpf_map_lookup_elem(config_map, &cfg_key);
+    __u8 *enabled;
+    if (!sel || *sel == 0)
+        enabled = bpf_map_lookup_elem(&ot_proto_cfg_a, &cfg_key);
+    else
+        enabled = bpf_map_lookup_elem(&ot_proto_cfg_b, &cfg_key);
     if (!enabled)
         return;
 
@@ -254,7 +257,12 @@ static int INLINE hash_ipv4(struct xdp_md *ctx, void *data, void *data_end, __u1
     }
 #endif
 
-    void* layer4 = data + (iph->ihl << 2);
+    /* Mask the 4-bit ihl field before shifting: kernel 5.4 verifier requires a
+     * known non-negative range before allowing packet pointer arithmetic. */
+    __u32 hdr_len = ((__u32)(iph->ihl) & 0x0F) << 2;
+    if (hdr_len < sizeof(*iph) || (void *)data + hdr_len > data_end)
+        return XDP_PASS;
+    void *layer4 = data + hdr_len;
 
     __u32 key0 = 0;
     __u32 cpu_dest;
@@ -271,12 +279,21 @@ static int INLINE hash_ipv4(struct xdp_md *ctx, void *data, void *data_end, __u1
         return XDP_PASS;
     }
 
-    if (iph->protocol == IPPROTO_TCP || iph->protocol == IPPROTO_UDP)
-        stats_incr_ip(iph->protocol, dport);
+    /* Pre-load all packet-derived scalars before the stats call.
+     * On kernel 5.4, inlining helpers (bpf_map_lookup_elem, bpf_ktime_get_ns)
+     * can cause the verifier to lose PTR_TO_PACKET range tracking for iph.
+     * Reading everything needed from packet memory first avoids any packet
+     * pointer reads after the inlined stats code. */
+    __u32 saddr    = iph->saddr;
+    __u32 daddr    = iph->daddr;
+    __u8  protocol = iph->protocol;
 
-    DPRINTF("Flow proto  %d id %d\n", iph->protocol, iph->id);
-    DPRINTF("     src %x:%d\n", iph->saddr, __constant_htons(sport));
-    DPRINTF("     dst %x:%d\n", iph->daddr, __constant_htons(dport));
+    if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP)
+        stats_incr_ip(protocol, dport);
+
+    DPRINTF("Flow proto  %d id %d\n", protocol, iph->id);
+    DPRINTF("     src %x:%d\n", saddr, __constant_htons(sport));
+    DPRINTF("     dst %x:%d\n", daddr, __constant_htons(dport));
 
 #ifdef ENABLE_STREAM_FILTER
     if (stream_filter_ipv4(ctx, iph, data, data_end, sport, dport, vlan0, vlan1) == XDP_DROP) {
@@ -298,16 +315,16 @@ static int INLINE hash_ipv4(struct xdp_md *ctx, void *data, void *data_end, __u1
      *   - it uses the full 5-tuple for hashing
      *   - creates more entropy by distrupting the fairly static network bits
      */
-    if (iph->saddr > iph->daddr) {
-        ((__u32*)&cpu_hash_input)[0] = iph->saddr + sport;
-        ((__u32*)&cpu_hash_input)[1] = iph->daddr + dport;
+    if (saddr > daddr) {
+        ((__u32*)&cpu_hash_input)[0] = saddr + sport;
+        ((__u32*)&cpu_hash_input)[1] = daddr + dport;
 
-        cpu_hash = SuperFastHash((char *)&cpu_hash_input, 8, INITVAL + iph->protocol);
+        cpu_hash = SuperFastHash((char *)&cpu_hash_input, 8, INITVAL + protocol);
     } else {
-        ((__u32*)&cpu_hash_input)[0] = iph->daddr + dport;
-        ((__u32*)&cpu_hash_input)[1] = iph->saddr + sport;
+        ((__u32*)&cpu_hash_input)[0] = daddr + dport;
+        ((__u32*)&cpu_hash_input)[1] = saddr + sport;
 
-        cpu_hash = SuperFastHash((char *)&cpu_hash_input, 8, INITVAL + iph->protocol);
+        cpu_hash = SuperFastHash((char *)&cpu_hash_input, 8, INITVAL + protocol);
     }
 
     if (cpu_max && *cpu_max) {
@@ -354,8 +371,14 @@ static int INLINE hash_ipv6(struct xdp_md *ctx, void *data, void *data_end, __u1
         return XDP_PASS;
     }
 
-    if (ip6h->nexthdr == IPPROTO_TCP || ip6h->nexthdr == IPPROTO_UDP)
-        stats_incr_ip(ip6h->nexthdr, dport);
+    /* Pre-load all packet-derived scalars before the stats call (same reason
+     * as hash_ipv4: avoids packet pointer reads after inlined helpers). */
+    __u8 nexthdr          = ip6h->nexthdr;
+    struct in6_addr lsrc  = ip6h->saddr;
+    struct in6_addr ldst  = ip6h->daddr;
+
+    if (nexthdr == IPPROTO_TCP || nexthdr == IPPROTO_UDP)
+        stats_incr_ip(nexthdr, dport);
 
     __u32 key0 = 0;
     __u32 cpu_dest;
@@ -394,8 +417,8 @@ static int INLINE hash_ipv6(struct xdp_md *ctx, void *data, void *data_end, __u1
      * NOTE that we're sorting the address in network order; this doens't matter,
      * as long as it's consistent.
      */
-    __u64 *source = (__u64 *)&ip6h->saddr;
-    __u64 *dest   = (__u64 *)&ip6h->daddr;
+    __u64 *source = (__u64 *)&lsrc;
+    __u64 *dest   = (__u64 *)&ldst;
     if (sort128(source, dest)) {
         ip_hash_input = source[0] + dest[1] + sport;
         ip_hash_input += source[1] + dest[0] + dport;
@@ -403,7 +426,7 @@ static int INLINE hash_ipv6(struct xdp_md *ctx, void *data, void *data_end, __u1
         ip_hash_input = dest[0] + source[1] + dport;
         ip_hash_input += dest[1] + source[0] + sport;
     }
-    cpu_hash = SuperFastHash((char *)&ip_hash_input, 8, INITVAL + ip6h->nexthdr);
+    cpu_hash = SuperFastHash((char *)&ip_hash_input, 8, INITVAL + nexthdr);
 
     if (cpu_max && *cpu_max) {
         cpu_dest = cpu_hash % *cpu_max;
@@ -429,7 +452,12 @@ static int INLINE filter_gre(struct xdp_md *ctx, void *data, __u64 nh_off, void 
         __be16 proto;
     };
 
-    nh_off += iph->ihl << 2;
+    /* Same ihl mask as hash_ipv4: bound the nibble so the verifier accepts
+     * the subsequent packet pointer arithmetic derived from nh_off. */
+    __u32 ihl_bytes = ((__u32)(iph->ihl) & 0x0F) << 2;
+    if (ihl_bytes < sizeof(*iph))
+        return XDP_PASS;
+    nh_off += ihl_bytes;
 
     /* need to save this off before we advance the packet beyond it, else the bpf verifier
      * will catch this and refuse to load our program
@@ -603,13 +631,28 @@ int SEC("xdp") xdp_loadfilter(struct xdp_md *ctx)
         DPRINTF("vlan1 %x\n", vlan1);
     }
 
-    stats_incr_l2(h_proto);
+
+    /* Re-establish packet pointers and re-bound nh_off after inlined stats
+     * helpers.  On kernel 4.15 (and other pre-5.x kernels), inlined map
+     * lookups and bpf_ktime_get_ns reset the verifier's register range:
+     *   - data/data_end lose PTR_TO_PACKET type → re-load from ctx
+     *   - nh_off loses its smin (becomes S64_MIN) → explicit sign check
+     * The sign check sets smin=0 on the false path; the bounds check then
+     * constrains nh_off to [0, packet_size] so data+nh_off is accepted. */
+    // data     = CTX_GET_DATA(ctx);
+    // data_end = CTX_GET_DATA_END(ctx);
+    // if ((long long)nh_off < 0)
+    //     return XDP_PASS;
+    // if (data + nh_off > data_end)
+    //     return XDP_PASS;
 
     if (h_proto == __constant_htons(ETH_P_IP)) {
         return filter_ipv4(ctx, data, nh_off, data_end, vlan0, vlan1);
     }
     else if (h_proto == __constant_htons(ETH_P_IPV6)) {
         return filter_ipv6(ctx, data, nh_off, data_end, vlan0, vlan1);
+    } else {
+        stats_incr_l2(h_proto);
     }
 
     return XDP_PASS;

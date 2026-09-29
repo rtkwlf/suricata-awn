@@ -15,6 +15,7 @@
 #define OT_SCHEMA_VERSION_L2_PROTO_STATS   1
 #define OT_SCHEMA_VERSION_IP_PROTO_STATS   1
 #define OT_SCHEMA_VERSION_CONFIG           1  /* applies to both cfg_a and cfg_b */
+#define OT_MAPS_PATH                       "/sys/fs/bpf/suricata"
 
 enum ot_map_id {
     OT_MAP_L2_PROTO_STATS  = 0,

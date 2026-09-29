@@ -156,7 +156,7 @@ struct {
 /* Config generation ID — incremented by external program after config entries
  * are fully written, so consumers can detect a completed update without polling.
  * Type: ARRAY with 1 entry (key=0, value=u64 counter).
- * Pinned map; reset to 0 by Suricata on startup.
+ * Pinned map; owned and initialized by suricataconfig, not by Suricata.
  */
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -186,17 +186,25 @@ static INLINE void stats_incr_l2(__u16 h_proto)
 {
     __u32 cfg_key = (0U << 31) | (__u32)__builtin_bswap16(h_proto);  /* type=0 for L2 */
 
-    __u32 sel_key = 0;
-    __u32 *sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);
+    __u32 sel_key = 0, *sel;
     __u8 *enabled;
-    if (!sel || *sel == 0)
-        enabled = bpf_map_lookup_elem(&ot_proto_cfg_a, &cfg_key);
-    else
-        enabled = bpf_map_lookup_elem(&ot_proto_cfg_b, &cfg_key);
-    if (!enabled)
+    __u64 now;
+    sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);
+    if (!sel) {
         return;
+    }
 
-    __u64 now = bpf_ktime_get_ns();
+    if (*sel == 0) {
+        enabled = bpf_map_lookup_elem(&ot_proto_cfg_a, &cfg_key);
+    } else {
+        enabled = bpf_map_lookup_elem(&ot_proto_cfg_b, &cfg_key);
+    }
+
+    if (!enabled) {
+        return;
+    }
+
+    now = bpf_ktime_get_ns();
     struct ot_stat *s = bpf_map_lookup_elem(&l2_proto_stats, &h_proto);
     if (s) {
         s->count++;
@@ -219,18 +227,26 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
     __u16 port_hbo = __builtin_bswap16((__u16)dport_nbo);
     __u32 key = __builtin_bswap32(((__u32)proto << 16) | port_hbo);
 
-    __u32 sel_key = 0;
-    __u32 *sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);
+    __u32 sel_key = 0, 
     __u32 cfg_key = (1U << 31) | key;  /* type=1 for L3 */
     __u8 *enabled;
-    if (!sel || *sel == 0)
-        enabled = bpf_map_lookup_elem(&ot_proto_cfg_a, &cfg_key);
-    else
-        enabled = bpf_map_lookup_elem(&ot_proto_cfg_b, &cfg_key);
-    if (!enabled)
+    __u64 now;
+    sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);
+    if (!sel) {
         return;
+    }
 
-    __u64 now = bpf_ktime_get_ns();
+    if (*sel == 0) {
+        enabled = bpf_map_lookup_elem(&ot_proto_cfg_a, &cfg_key);
+    } else {
+        enabled = bpf_map_lookup_elem(&ot_proto_cfg_b, &cfg_key);
+    }
+
+    if (!enabled) {
+        return;
+    }
+
+     = bpf_ktime_get_ns();
     struct ot_stat *s = bpf_map_lookup_elem(&ip_proto_stats, &key);
     if (s) {
         s->count++;

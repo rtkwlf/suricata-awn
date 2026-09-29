@@ -227,11 +227,11 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
     __u16 port_hbo = __builtin_bswap16((__u16)dport_nbo);
     __u32 key = __builtin_bswap32(((__u32)proto << 16) | port_hbo);
 
-    __u32 sel_key = 0, 
+    __u32 sel_key = 0;
     __u32 cfg_key = (1U << 31) | key;  /* type=1 for L3 */
     __u8 *enabled;
     __u64 now;
-    sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);
+    __u32 *sel = bpf_map_lookup_elem(&ot_proto_cfg_sel, &sel_key);
     if (!sel) {
         return;
     }
@@ -246,7 +246,7 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
         return;
     }
 
-     = bpf_ktime_get_ns();
+    now = bpf_ktime_get_ns();
     struct ot_stat *s = bpf_map_lookup_elem(&ip_proto_stats, &key);
     if (s) {
         s->count++;

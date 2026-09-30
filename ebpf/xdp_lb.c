@@ -95,16 +95,16 @@ struct {
  *                    Covers L2 OT protocols (EtherCAT 0x88A4, Profinet 0x8892,
  *                    GOOSE 0x88B8, etc.) as well as IPv4/IPv6.
  *
- *   ip_proto_stats   PERCPU_HASH  key = (ip_proto << 16) | dport
- *                                value = struct ot_stat { count, last_updated_ns }
+ *   l4_proto_stats   PERCPU_HASH  key = (protocol << 16) | dport
+ *                                value = struct ot_stat { pkt_count, last_updated_ns }
  *                    Counts TCP/UDP packets per protocol/destination-port pair.
- *                    Only populated for entries present in ip_proto_config.
+ *                    Only populated for entries present in l4_proto_config.
  *                    Covers IP-based OT protocols (Modbus TCP:502, DNP3:20000,
  *                    EtherNet/IP TCP:44818, BACnet UDP:47808, etc.)
  *
  * Both maps are per-CPU; sum across CPUs for totals:
  *   bpftool map dump name l2_proto_stats
- *   bpftool map dump name ip_proto_stats
+ *   bpftool map dump name l4_proto_stats
  */
 struct {
     __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
@@ -118,7 +118,7 @@ struct {
     __type(key, __u32);
     __type(value, struct ot_stat);
     __uint(max_entries, 8192);
-} ip_proto_stats SEC(".maps");
+} l4_proto_stats SEC(".maps");
 
 /* Double-buffered config maps (whitelist) — unified for both L2 and L3 protocols.
  * Key encoding: (type << 31) | proto_id
@@ -216,10 +216,10 @@ static INLINE void stats_incr_l2(__u16 h_proto)
     DPRINTF("stats l2 etype 0x%x\n", __builtin_bswap16(h_proto));
 }
 
-/* Increment IP protocol/port counter if (proto, dport) is in the config whitelist.
- * Key encoding: upper 16 bits = ip_proto, lower 16 bits = dport (host byte order).
+/* Increment L4 protocol/port counter if (proto, dport) is in the config whitelist.
+ * Key encoding: upper 16 bits = protocol, lower 16 bits = dport (host byte order).
  * dport_nbo is in network byte order as returned by get_dport(). */
-static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
+static INLINE void stats_incr_l4(__u8 proto, int dport_nbo)
 {
     if (dport_nbo <= 0)
         return;
@@ -247,15 +247,15 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
     }
 
     now = bpf_ktime_get_ns();
-    struct ot_stat *s = bpf_map_lookup_elem(&ip_proto_stats, &key);
+    struct ot_stat *s = bpf_map_lookup_elem(&l4_proto_stats, &key);
     if (s) {
         s->pkt_count++;
         s->last_updated_ns = now;
     } else {
         struct ot_stat init = { .pkt_count = 1, .last_updated_ns = now };
-        bpf_map_update_elem(&ip_proto_stats, &key, &init, BPF_ANY);
+        bpf_map_update_elem(&l4_proto_stats, &key, &init, BPF_ANY);
     }
-    DPRINTF("stats ip proto %d port %d\n", proto, port_hbo);
+    DPRINTF("stats l4 proto %d port %d\n", proto, port_hbo);
 }
 
 static int INLINE hash_ipv4(struct xdp_md *ctx, void *data, void *data_end, __u16 vlan0, __u16 vlan1)
@@ -305,7 +305,7 @@ static int INLINE hash_ipv4(struct xdp_md *ctx, void *data, void *data_end, __u1
     __u8  protocol = iph->protocol;
 
     if (protocol == IPPROTO_TCP || protocol == IPPROTO_UDP)
-        stats_incr_ip(protocol, dport);
+        stats_incr_l4(protocol, dport);
 
     DPRINTF("Flow proto  %d id %d\n", protocol, iph->id);
     DPRINTF("     src %x:%d\n", saddr, __constant_htons(sport));
@@ -394,7 +394,7 @@ static int INLINE hash_ipv6(struct xdp_md *ctx, void *data, void *data_end, __u1
     struct in6_addr ldst  = ip6h->daddr;
 
     if (nexthdr == IPPROTO_TCP || nexthdr == IPPROTO_UDP)
-        stats_incr_ip(nexthdr, dport);
+        stats_incr_l4(nexthdr, dport);
 
     __u32 key0 = 0;
     __u32 cpu_dest;

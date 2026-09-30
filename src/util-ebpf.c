@@ -113,8 +113,8 @@ static __u32 GetOTMapSchemaVersion(const char *mapname)
 {
     if (strcmp(mapname, "l2_proto_stats") == 0)
         return OT_SCHEMA_VERSION_L2_PROTO_STATS;
-    if (strcmp(mapname, "ip_proto_stats") == 0)
-        return OT_SCHEMA_VERSION_IP_PROTO_STATS;
+    if (strcmp(mapname, "l4_proto_stats") == 0)
+        return OT_SCHEMA_VERSION_L4_PROTO_STATS;
     if (strcmp(mapname, "ot_proto_cfg_a") == 0 || strcmp(mapname, "ot_proto_cfg_b") == 0)
         return OT_SCHEMA_VERSION_CONFIG;
     return 0;  /* Not an OT data map with versioning */
@@ -547,10 +547,10 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
             struct ot_map_meta m_l2 = { .schema_version = OT_SCHEMA_VERSION_L2_PROTO_STATS };
             bpf_map_update_elem(meta_fd, &key_l2, &m_l2, BPF_ANY);
 
-            /* Write schema version for ip_proto_stats */
-            __u32 key_ip = OT_MAP_IP_PROTO_STATS;
-            struct ot_map_meta m_ip = { .schema_version = OT_SCHEMA_VERSION_IP_PROTO_STATS };
-            bpf_map_update_elem(meta_fd, &key_ip, &m_ip, BPF_ANY);
+            /* Write schema version for l4_proto_stats */
+            __u32 key_l4 = OT_MAP_L4_PROTO_STATS;
+            struct ot_map_meta m_l4 = { .schema_version = OT_SCHEMA_VERSION_L4_PROTO_STATS };
+            bpf_map_update_elem(meta_fd, &key_l4, &m_l4, BPF_ANY);
 
             /* Write schema version for both config buffers */
             __u32 key_cfg_a = OT_MAP_CONFIG_A;
@@ -561,10 +561,10 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
             struct ot_map_meta m_cfg_b = { .schema_version = OT_SCHEMA_VERSION_CONFIG };
             bpf_map_update_elem(meta_fd, &key_cfg_b, &m_cfg_b, BPF_ANY);
 
-            SCLogInfo("%s: wrote schema versions: l2=%u ip=%u config_a=%u config_b=%u",
+            SCLogInfo("%s: wrote schema versions: l2=%u l4=%u config_a=%u config_b=%u",
                       iface,
                       OT_SCHEMA_VERSION_L2_PROTO_STATS,
-                      OT_SCHEMA_VERSION_IP_PROTO_STATS,
+                      OT_SCHEMA_VERSION_L4_PROTO_STATS,
                       OT_SCHEMA_VERSION_CONFIG,
                       OT_SCHEMA_VERSION_CONFIG);
         }

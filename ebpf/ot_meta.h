@@ -33,7 +33,7 @@ struct ot_map_meta {
  * last_updated_ns is bpf_ktime_get_ns() (nanoseconds since boot, per CPU)
  * at the time the counter was last incremented. */
 struct ot_stat {
-    __u64 count;
+    __u64 pkt_count;
     __u64 last_updated_ns;
 };
 

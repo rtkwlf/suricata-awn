@@ -207,10 +207,10 @@ static INLINE void stats_incr_l2(__u16 h_proto)
     now = bpf_ktime_get_ns();
     struct ot_stat *s = bpf_map_lookup_elem(&l2_proto_stats, &h_proto);
     if (s) {
-        s->count++;
+        s->pkt_count++;
         s->last_updated_ns = now;
     } else {
-        struct ot_stat init = { .count = 1, .last_updated_ns = now };
+        struct ot_stat init = { .pkt_count = 1, .last_updated_ns = now };
         bpf_map_update_elem(&l2_proto_stats, &h_proto, &init, BPF_ANY);
     }
     DPRINTF("stats l2 etype 0x%x\n", __builtin_bswap16(h_proto));
@@ -249,10 +249,10 @@ static INLINE void stats_incr_ip(__u8 proto, int dport_nbo)
     now = bpf_ktime_get_ns();
     struct ot_stat *s = bpf_map_lookup_elem(&ip_proto_stats, &key);
     if (s) {
-        s->count++;
+        s->pkt_count++;
         s->last_updated_ns = now;
     } else {
-        struct ot_stat init = { .count = 1, .last_updated_ns = now };
+        struct ot_stat init = { .pkt_count = 1, .last_updated_ns = now };
         bpf_map_update_elem(&ip_proto_stats, &key, &init, BPF_ANY);
     }
     DPRINTF("stats ip proto %d port %d\n", proto, port_hbo);

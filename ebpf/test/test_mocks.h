@@ -28,6 +28,9 @@ int bpf_xdp_adjust_head_mock(void* privData, int offset) {
 // This value is arbitrary...
 uint32_t g_cpuCount = 10;
 
+static __u64 bpf_ktime_get_ns_mock(void) { return 0; }
+static int bpf_map_update_elem_mock(void *map, const void *key, const void *value, __u64 flags) { return 0; }
+
 // This version of bpf_map_lookup_elem_mock is used by xdp_lb.test.c
 void* bpf_map_lookup_elem_lb_mock(void* map, void* key) {
 	if(map == &cpus_count) {
@@ -47,14 +50,20 @@ struct flowv4_keys g_stream_map_v4_lookup_keys;
 void* g_stream_map_lookup_value = NULL; // This is set by the test.
 
 // This version is used by xdp_stream.test.c
+// Only copy the key and return a match for the actual flow table maps; return NULL
+// for everything else (l2_proto_config, l4_proto_config, stats maps, etc.) so that
+// stats helpers exit early without calling bpf_ktime_get_ns or bpf_map_update_elem.
 void* bpf_map_lookup_elem_stream_mock_v4(void* map, void* key) {
-	// Make a copy of the key so the test can check it after the call finishes.
+	if (map != &flow_table_v4)
+		return NULL;
 	memcpy(&g_stream_map_v4_lookup_keys, key, sizeof(struct flowv4_keys));
 	return g_stream_map_lookup_value;
 }
 
 struct flowv6_keys g_stream_map_v6_lookup_keys;
 void* bpf_map_lookup_elem_stream_mock_v6(void* map, void* key) {
+	if (map != &flow_table_v6)
+		return NULL;
 	memcpy(&g_stream_map_v6_lookup_keys, key, sizeof(struct flowv6_keys));
 	return g_stream_map_lookup_value;
 }
@@ -71,6 +80,8 @@ void setup_mocks() {
   bpf_xdp_adjust_head = bpf_xdp_adjust_head_mock;
   bpf_redirect_map = bpf_redirect_map_mock;
   bpf_trace_printk = test_trace_hook;
+  bpf_ktime_get_ns = bpf_ktime_get_ns_mock;
+  bpf_map_update_elem = bpf_map_update_elem_mock;
 }
 
 #endif

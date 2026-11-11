@@ -46,6 +46,7 @@
 
 #include "output.h"
 #include "output-json.h"
+#include "decode-sgt.h"
 
 #include "util-byte.h"
 #include "util-print.h"
@@ -875,6 +876,30 @@ SCJsonBuilder *CreateEveHeader(const Packet *p, enum SCOutputJsonLogDirection di
         if (p->vlan_idx > 2) {
             SCJbAppendUint(js, p->vlan_id[2]);
         }
+        SCJbClose(js);
+    }
+
+    /* cisco_metadata (EtherType 0x8909).
+     * Wire packets carry SGT directly on p->cmd_present.
+     * Stream-reassembled and pseudo-packets have cmd_present=0; fall back to
+     * the per-direction SGT on the flow, using p->flowflags to pick direction. */
+    const bool pkt_is_toclient = (p->flowflags & FLOW_PKT_TOCLIENT) != 0;
+    const uint8_t sgt_present =
+            p->cmd_present ? p->cmd_present
+                           : (f != NULL ? (pkt_is_toclient ? f->sgt_tc_present
+                                                           : f->sgt_ts_present)
+                                        : 0);
+    if (sgt_present && DecodeCiscoMetadataEveEnabled()) {
+        const uint8_t  sgt_version =
+                p->cmd_present ? p->cmd_version : (f != NULL ? f->sgt_cmd_version : 0);
+        const uint16_t sgt_value =
+                p->cmd_present ? p->sgt_value
+                               : (f != NULL ? (pkt_is_toclient ? f->sgt_toclient
+                                                               : f->sgt_toserver)
+                                            : 0);
+        SCJbOpenObject(js, "cisco_metadata");
+        SCJbSetUint(js, "version", sgt_version);
+        SCJbSetUint(js, "sgt", sgt_value);
         SCJbClose(js);
     }
 

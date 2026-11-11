@@ -153,6 +153,11 @@ enum {
     VLAN_UNKNOWN_TYPE,     /**< vlan unknown type */
     VLAN_HEADER_TOO_MANY_LAYERS,
 
+    /* SGT EVENTS */
+    SGT_HEADER_TOO_SMALL,      /**< sgt header smaller than minimum size */
+    SGT_NO_INNER_FRAME,        /**< no inner frame after SGT header */
+    SGT_UNSUPPORTED_INNER_PROTOCOL, /**< inner payload is not IPv4 or IPv6 */
+
     IEEE8021AH_HEADER_TOO_SMALL,
 
     /* VNTAG EVENTS */

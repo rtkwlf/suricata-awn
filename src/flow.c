@@ -270,6 +270,8 @@ void FlowSwap(Flow *f)
     SWAP_VARS(AppProto, f->alproto_ts, f->alproto_tc);
     SWAP_VARS(uint8_t, f->min_ttl_toserver, f->max_ttl_toserver);
     SWAP_VARS(uint8_t, f->min_ttl_toclient, f->max_ttl_toclient);
+    SWAP_VARS(uint8_t,  f->sgt_ts_present, f->sgt_tc_present);
+    SWAP_VARS(uint16_t, f->sgt_toserver,   f->sgt_toclient);
 
     /* not touching Flow::alparser and Flow::alstate */
 
@@ -473,6 +475,13 @@ void FlowHandlePacketUpdate(Flow *f, Packet *p, ThreadVars *tv, DecodeThreadVars
             const IPV6Hdr *ip6h = PacketGetIPv6(p);
             FlowUpdateTtlTS(f, IPV6_GET_RAW_HLIM(ip6h));
         }
+        /* update per-direction SGT from CMD frame if present */
+        if (p->cmd_present) {
+            f->sgt_ts_present  = 1;
+            f->sgt_toserver    = p->sgt_value;
+            if (!f->sgt_cmd_version)
+                f->sgt_cmd_version = p->cmd_version;
+        }
     } else {
         f->tosrcpktcnt++;
         f->tosrcbytecnt += GET_PKT_LEN(p);
@@ -498,6 +507,13 @@ void FlowHandlePacketUpdate(Flow *f, Packet *p, ThreadVars *tv, DecodeThreadVars
         } else if (PacketIsIPv6(p)) {
             const IPV6Hdr *ip6h = PacketGetIPv6(p);
             FlowUpdateTtlTC(f, IPV6_GET_RAW_HLIM(ip6h));
+        }
+        /* update per-direction SGT from CMD frame if present */
+        if (p->cmd_present) {
+            f->sgt_tc_present  = 1;
+            f->sgt_toclient    = p->sgt_value;
+            if (!f->sgt_cmd_version)
+                f->sgt_cmd_version = p->cmd_version;
         }
     }
     if (f->thread_id[pkt_dir] == 0) {

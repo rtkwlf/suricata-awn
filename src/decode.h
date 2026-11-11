@@ -92,6 +92,7 @@ enum PktSrcEnum {
 #include "decode-vlan.h"
 #include "decode-mpls.h"
 #include "decode-arp.h"
+#include "decode-sgt.h"
 
 #include "util-validate.h"
 
@@ -527,6 +528,11 @@ typedef struct Packet_
 
     uint16_t vlan_id[VLAN_MAX_LAYERS];
     uint8_t vlan_idx;
+
+    /* Cisco MetaData (CMD / EtherType 0x8909) */
+    uint16_t sgt_value;     /* SGT value from CMD option type 0x0001 */
+    uint8_t  cmd_version;   /* CMD base header version (byte 0) */
+    uint8_t  cmd_present;   /* non-zero when a CMD header was decoded */
 
     /* flow */
     uint8_t flowflags;
@@ -1013,6 +1019,7 @@ typedef struct DecodeThreadVars_
     uint16_t counter_ipv6inipv6;
     uint16_t counter_erspan;
     uint16_t counter_nsh;
+    uint16_t counter_sgt;
 
     /** frag stats - defrag runs in the context of the decoder. */
     uint16_t counter_defrag_ipv4_fragments;
@@ -1168,6 +1175,7 @@ int DecodeCHDLC(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uin
 int DecodeTEMPLATE(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uint32_t);
 int DecodeNSH(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uint32_t);
 int DecodeARP(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uint32_t);
+int DecodeSGT(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uint32_t);
 
 #ifdef UNITTESTS
 void DecodeIPV6FragHeader(Packet *p, const uint8_t *pkt,
@@ -1483,6 +1491,9 @@ static inline bool DecodeNetworkLayer(ThreadVars *tv, DecodeThreadVars *dtv,
             break;
         case ETHERNET_TYPE_8021AH:
             DecodeIEEE8021ah(tv, dtv, p, data, len);
+            break;
+        case ETHERNET_TYPE_SGT:
+            DecodeSGT(tv, dtv, p, data, len);
             break;
         case ETHERNET_TYPE_ARP:
             DecodeARP(tv, dtv, p, data, len);

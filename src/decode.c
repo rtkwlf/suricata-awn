@@ -62,6 +62,7 @@
 #include "decode-erspan.h"
 #include "decode-teredo.h"
 #include "decode-arp.h"
+#include "decode-sgt.h"
 
 #include "defrag-hash.h"
 
@@ -674,6 +675,7 @@ void DecodeRegisterPerfCounters(DecodeThreadVars *dtv, ThreadVars *tv)
     dtv->counter_vlan_qinq = StatsRegisterCounter("decoder.vlan_qinq", tv);
     dtv->counter_vlan_qinqinq = StatsRegisterCounter("decoder.vlan_qinqinq", tv);
     dtv->counter_vxlan = StatsRegisterCounter("decoder.vxlan", tv);
+    dtv->counter_sgt = StatsRegisterCounter("decoder.cisco_metadata", tv);
     dtv->counter_vntag = StatsRegisterCounter("decoder.vntag", tv);
     dtv->counter_ieee8021ah = StatsRegisterCounter("decoder.ieee8021ah", tv);
     dtv->counter_teredo = StatsRegisterCounter("decoder.teredo", tv);
@@ -1066,6 +1068,7 @@ void DecodeGlobalConfig(void)
     DecodeGeneveConfig();
     DecodeVXLANConfig();
     DecodeERSPANConfig();
+    DecodeCiscoMetadataConfig();
     intmax_t value = 0;
     if (SCConfGetInt("decoder.max-layers", &value) == 1) {
         if (value < 0 || value > UINT8_MAX) {

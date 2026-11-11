@@ -382,6 +382,14 @@ typedef struct Flow_
         uint8_t ffr;
     };
 
+    /* Cisco MetaData (CMD / EtherType 0x8909) — per-direction SGT tracking */
+    uint8_t  sgt_ts_present;   /* toserver (initiator→responder) packets carried CMD */
+    uint8_t  sgt_tc_present;   /* toclient (responder→initiator) packets carried CMD */
+    uint8_t  sgt_cmd_version;  /* CMD version (from first CMD-carrying packet) */
+    uint8_t  sgt_pad;          /* padding */
+    uint16_t sgt_toserver;     /* SGT of flow initiator */
+    uint16_t sgt_toclient;     /* SGT of flow responder */
+
     /** Thread ID for the stream/detect portion of this flow */
     FlowThreadId thread_id[2];
 

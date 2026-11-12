@@ -228,6 +228,7 @@ enum {
     SGT_CMD_HDR_TOO_SMALL,             /**< sgt cmd header smaller than minimum size */
     SGT_CMD_NO_INNER_FRAME,            /**< no inner frame after SGT CMD header */
     SGT_CMD_UNSUPPORTED_INNER_PROTOCOL, /**< inner payload is not IPv4 or IPv6 */
+    SGT_CMD_DUPLICATE_SGT_OPTION,      /**< more than one SGT option in a single CMD frame */
 
     /* generic events — sentinel; new packet decode events must go above this line */
     GENERIC_TOO_MANY_LAYERS,

@@ -106,14 +106,21 @@ int DecodeSGT(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
      * OptLen = additional 4-byte units beyond the base 4 bytes of this option.
      * SGT option: OptLen=0, Type=1, Value=2 bytes → always 4 bytes total. */
     uint16_t sgt_value = 0;
+    bool sgt_seen = false;
     const uint8_t *opt     = pkt + CMD_BASE_HDR_LEN;
     const uint8_t *opt_end = opt + ((uint32_t)cmd->length * 4U);
     while (opt + 4U <= opt_end) {
         uint16_t combined = SCNtohs(*(const uint16_t *)opt);
         uint16_t opt_type = CMD_OPT_TYPE(combined);
         uint32_t opt_size = CMD_OPT_SIZE(combined);
-        if (opt_type == CMD_OPTION_TYPE_SGT)
+        if (opt_type == CMD_OPTION_TYPE_SGT) {
+            if (sgt_seen) {
+                ENGINE_SET_INVALID_EVENT(p, SGT_CMD_DUPLICATE_SGT_OPTION);
+                return TM_ECODE_FAILED;
+            }
             sgt_value = SCNtohs(*(const uint16_t *)(opt + 2));
+            sgt_seen = true;
+        }
         opt += opt_size;
     }
 

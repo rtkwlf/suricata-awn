@@ -76,8 +76,8 @@ typedef struct CMDHdr_ {
 #define CMD_TOTAL_LEN(length) \
     (CMD_BASE_HDR_LEN + ((uint32_t)(length) * 4U) + CMD_ETHERTYPE_LEN)
 
-void DecodeCiscoMetadataConfig(void);
-bool DecodeCiscoMetadataEveEnabled(void);
+void DecodeSgtCmdConfig(void);
+bool DecodeSgtCmdEveEnabled(void);
 void DecodeSGTRegisterTests(void);
 
 #endif /* SURICATA_DECODE_SGT_H */

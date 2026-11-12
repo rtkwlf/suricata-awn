@@ -6937,7 +6937,7 @@
                                         }
                                     }
                                 },
-                                "cisco_metadata": {
+                                "sgt_cmd_metadata": {
                                     "type": "object",
                                     "additionalProperties": false,
                                     "properties": {
@@ -7094,9 +7094,9 @@
                             "type": "integer",
                             "description": "Number of VXLAN packets decoded"
                         },
-                        "cisco_metadata": {
+                        "sgt_cmd_metadata": {
                             "type": "integer",
-                            "description": "Number of Cisco MetaData (EtherType 0x8909) packets decoded"
+                            "description": "Number of SGT CMD (EtherType 0x8909) packets decoded"
                         }
                     }
                 },
@@ -8732,9 +8732,9 @@
                 }
             }
         },
-        "cisco_metadata": {
+        "sgt_cmd_metadata": {
             "type": "object",
-            "description": "Cisco MetaData (CMD / EtherType 0x8909) header fields",
+            "description": "SGT CMD (EtherType 0x8909) header fields",
             "additionalProperties": false,
             "properties": {
                 "version": {
@@ -8742,7 +8742,15 @@
                 },
                 "sgt": {
                     "type": "integer",
-                    "description": "Security Group Tag value"
+                    "description": "Security Group Tag (wire packets only: alert, packet events)"
+                },
+                "sgt_toserver": {
+                    "type": "integer",
+                    "description": "SGT of the flow initiator (app-layer transaction events)"
+                },
+                "sgt_toclient": {
+                    "type": "integer",
+                    "description": "SGT of the flow responder (app-layer transaction events)"
                 }
             }
         },

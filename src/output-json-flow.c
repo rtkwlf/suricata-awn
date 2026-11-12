@@ -122,9 +122,9 @@ static SCJsonBuilder *CreateEveHeaderFromFlow(const Flow *f)
         SCJbClose(jb);
     }
 
-    /* cisco_metadata (EtherType 0x8909) — per-direction SGT */
-    if ((f->sgt_ts_present || f->sgt_tc_present) && DecodeCiscoMetadataEveEnabled()) {
-        SCJbOpenObject(jb, "cisco_metadata");
+    /* sgt_cmd_metadata (EtherType 0x8909) — per-direction SGT */
+    if ((f->sgt_ts_present || f->sgt_tc_present) && DecodeSgtCmdEveEnabled()) {
+        SCJbOpenObject(jb, "sgt_cmd_metadata");
         SCJbSetUint(jb, "version", f->sgt_cmd_version);
         if (f->sgt_ts_present)
             SCJbSetUint(jb, "sgt_toserver", f->sgt_toserver);

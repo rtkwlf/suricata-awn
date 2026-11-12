@@ -153,11 +153,6 @@ enum {
     VLAN_UNKNOWN_TYPE,     /**< vlan unknown type */
     VLAN_HEADER_TOO_MANY_LAYERS,
 
-    /* SGT EVENTS */
-    SGT_HEADER_TOO_SMALL,      /**< sgt header smaller than minimum size */
-    SGT_NO_INNER_FRAME,        /**< no inner frame after SGT header */
-    SGT_UNSUPPORTED_INNER_PROTOCOL, /**< inner payload is not IPv4 or IPv6 */
-
     IEEE8021AH_HEADER_TOO_SMALL,
 
     /* VNTAG EVENTS */
@@ -229,7 +224,12 @@ enum {
     NSH_UNSUPPORTED_TYPE,
     NSH_UNKNOWN_PAYLOAD,
 
-    /* generic events */
+    /* SGT CMD EVENTS */
+    SGT_CMD_HDR_TOO_SMALL,             /**< sgt cmd header smaller than minimum size */
+    SGT_CMD_NO_INNER_FRAME,            /**< no inner frame after SGT CMD header */
+    SGT_CMD_UNSUPPORTED_INNER_PROTOCOL, /**< inner payload is not IPv4 or IPv6 */
+
+    /* generic events — sentinel; new packet decode events must go above this line */
     GENERIC_TOO_MANY_LAYERS,
 
     /* END OF DECODE EVENTS ON SINGLE PACKET */

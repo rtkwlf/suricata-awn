@@ -417,20 +417,6 @@ const struct DecodeEvents_ DEvents[] = {
             "decoder.vlan.too_many_layers",
             VLAN_HEADER_TOO_MANY_LAYERS,
     },
-    /* CISCO METADATA EVENTS */
-    {
-            "decoder.cisco_metadata.header_too_small",
-            SGT_HEADER_TOO_SMALL,
-    },
-    {
-            "decoder.cisco_metadata.no_inner_frame",
-            SGT_NO_INNER_FRAME,
-    },
-    {
-            "decoder.cisco_metadata.unsupported_inner_protocol",
-            SGT_UNSUPPORTED_INNER_PROTOCOL,
-    },
-
     {
             "decoder.ieee8021ah.header_too_small",
             IEEE8021AH_HEADER_TOO_SMALL,
@@ -612,6 +598,20 @@ const struct DecodeEvents_ DEvents[] = {
     {
             "decoder.nsh.unknown_payload",
             NSH_UNKNOWN_PAYLOAD,
+    },
+
+    /* SGT CMD EVENTS */
+    {
+            "decoder.sgt_cmd_metadata.header_too_small",
+            SGT_CMD_HDR_TOO_SMALL,
+    },
+    {
+            "decoder.sgt_cmd_metadata.no_inner_frame",
+            SGT_CMD_NO_INNER_FRAME,
+    },
+    {
+            "decoder.sgt_cmd_metadata.unsupported_inner_protocol",
+            SGT_CMD_UNSUPPORTED_INNER_PROTOCOL,
     },
 
     /* GENERIC EVENTS */

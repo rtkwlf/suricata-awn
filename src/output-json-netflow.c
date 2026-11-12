@@ -125,13 +125,13 @@ static SCJsonBuilder *CreateEveHeaderFromNetFlow(const Flow *f, int dir)
         SCJbClose(js);
     }
 
-    /* cisco_metadata (EtherType 0x8909) — direction-correct SGT.
+    /* sgt_cmd_metadata (EtherType 0x8909) — direction-correct SGT.
      * dir is already XOR'd with FLOW_DIR_REVERSED above: 0=toserver, 1=toclient. */
-    if (DecodeCiscoMetadataEveEnabled()) {
+    if (DecodeSgtCmdEveEnabled()) {
         const uint8_t  sgt_present = (dir == 0) ? f->sgt_ts_present : f->sgt_tc_present;
         const uint16_t sgt_val     = (dir == 0) ? f->sgt_toserver   : f->sgt_toclient;
         if (sgt_present) {
-            SCJbOpenObject(js, "cisco_metadata");
+            SCJbOpenObject(js, "sgt_cmd_metadata");
             SCJbSetUint(js, "version", f->sgt_cmd_version);
             SCJbSetUint(js, "sgt", sgt_val);
             SCJbClose(js);

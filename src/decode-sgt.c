@@ -27,32 +27,32 @@
 #include "util-debug.h"
 #include "conf.h"
 
-static bool g_cisco_metadata_enabled = false;
-static bool g_cisco_metadata_eve_enabled = false;
+static bool g_sgt_cmd_enabled = false;
+static bool g_sgt_cmd_eve_enabled = false;
 
-void DecodeCiscoMetadataConfig(void)
+void DecodeSgtCmdConfig(void)
 {
     int enabled = 0;
-    SCConfGetBool("decoder.cisco-sgt.enabled", &enabled);
-    g_cisco_metadata_enabled = (enabled != 0);
+    SCConfGetBool("decoder.sgt-cmd.enabled", &enabled);
+    g_sgt_cmd_enabled = (enabled != 0);
 
-    SCLogConfig("Cisco SGT decoder: %s",
-            g_cisco_metadata_enabled ? "enabled" : "disabled");
+    SCLogConfig("SGT CMD decoder: %s",
+            g_sgt_cmd_enabled ? "enabled" : "disabled");
 
-    if (!g_cisco_metadata_enabled)
+    if (!g_sgt_cmd_enabled)
         return;
 
     int metadata = 0;
-    SCConfGetBool("decoder.cisco-sgt.metadata", &metadata);
-    g_cisco_metadata_eve_enabled = (metadata != 0);
+    SCConfGetBool("decoder.sgt-cmd.metadata", &metadata);
+    g_sgt_cmd_eve_enabled = (metadata != 0);
 
-    SCLogConfig("Cisco SGT EVE output: %s",
-            g_cisco_metadata_eve_enabled ? "enabled" : "disabled");
+    SCLogConfig("SGT CMD EVE output: %s",
+            g_sgt_cmd_eve_enabled ? "enabled" : "disabled");
 }
 
-bool DecodeCiscoMetadataEveEnabled(void)
+bool DecodeSgtCmdEveEnabled(void)
 {
-    return g_cisco_metadata_eve_enabled;
+    return g_sgt_cmd_eve_enabled;
 }
 
 /**
@@ -73,13 +73,13 @@ int DecodeSGT(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
 {
     DEBUG_VALIDATE_BUG_ON(pkt == NULL);
 
-    if (!g_cisco_metadata_enabled)
+    if (!g_sgt_cmd_enabled)
         return TM_ECODE_OK;
 
     StatsIncr(tv, dtv->counter_sgt);
 
     if (len < CMD_BASE_HDR_LEN) {
-        ENGINE_SET_INVALID_EVENT(p, SGT_HEADER_TOO_SMALL);
+        ENGINE_SET_INVALID_EVENT(p, SGT_CMD_HDR_TOO_SMALL);
         return TM_ECODE_FAILED;
     }
 
@@ -91,7 +91,13 @@ int DecodeSGT(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
     uint32_t cmd_total = CMD_TOTAL_LEN(cmd->length);
 
     if (cmd_total > len) {
-        ENGINE_SET_INVALID_EVENT(p, SGT_HEADER_TOO_SMALL);
+        ENGINE_SET_INVALID_EVENT(p, SGT_CMD_HDR_TOO_SMALL);
+        return TM_ECODE_FAILED;
+    }
+    /* cmd_total == len means options + inner EtherType fill the buffer exactly;
+     * no bytes remain for the inner IP payload. */
+    if (cmd_total == len) {
+        ENGINE_SET_INVALID_EVENT(p, SGT_CMD_NO_INNER_FRAME);
         return TM_ECODE_FAILED;
     }
 
@@ -121,11 +127,6 @@ int DecodeSGT(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
     p->cmd_version = cmd->version;
     p->sgt_value   = sgt_value;
 
-    if (cmd_total >= len) {
-        ENGINE_SET_INVALID_EVENT(p, SGT_NO_INNER_FRAME);
-        return TM_ECODE_FAILED;
-    }
-
     const uint8_t *inner    = pkt + cmd_total;
     uint32_t       inner_len = len - cmd_total;
 
@@ -133,7 +134,7 @@ int DecodeSGT(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
         DecodeNetworkLayer(tv, dtv, inner_etype, p, inner, inner_len);
     } else {
         SCLogDebug("CMD unsupported inner EtherType 0x%04x", inner_etype);
-        ENGINE_SET_INVALID_EVENT(p, SGT_UNSUPPORTED_INNER_PROTOCOL);
+        ENGINE_SET_INVALID_EVENT(p, SGT_CMD_UNSUPPORTED_INNER_PROTOCOL);
         return TM_ECODE_FAILED;
     }
 
@@ -151,10 +152,10 @@ int DecodeSGT(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
  */
 static int DecodeSGTTest01(void)
 {
-    bool saved_enabled = g_cisco_metadata_enabled;
-    bool saved_eve     = g_cisco_metadata_eve_enabled;
-    g_cisco_metadata_enabled     = true;
-    g_cisco_metadata_eve_enabled = true;
+    bool saved_enabled = g_sgt_cmd_enabled;
+    bool saved_eve     = g_sgt_cmd_eve_enabled;
+    g_sgt_cmd_enabled     = true;
+    g_sgt_cmd_eve_enabled = true;
 
     uint8_t raw[] = {
         /* CMD base: version=1, length=1 (1 option word follows) */
@@ -185,17 +186,17 @@ static int DecodeSGTTest01(void)
                 p->cmd_version == 1 &&
                 p->cmd_present == 1);
 
-    g_cisco_metadata_enabled     = saved_enabled;
-    g_cisco_metadata_eve_enabled = saved_eve;
+    g_sgt_cmd_enabled     = saved_enabled;
+    g_sgt_cmd_eve_enabled = saved_eve;
     SCFree(p);
     return pass;
 }
 
-/* Frame shorter than CMD_BASE_HDR_LEN (2 bytes) must set SGT_HEADER_TOO_SMALL */
+/* Frame shorter than CMD_BASE_HDR_LEN (2 bytes) must set SGT_CMD_HDR_TOO_SMALL */
 static int DecodeSGTTest02(void)
 {
-    bool saved = g_cisco_metadata_enabled;
-    g_cisco_metadata_enabled = true;
+    bool saved = g_sgt_cmd_enabled;
+    g_sgt_cmd_enabled = true;
 
     uint8_t raw[] = { 0x01 };  /* 1 byte < CMD_BASE_HDR_LEN=2 */
 
@@ -209,8 +210,8 @@ static int DecodeSGTTest02(void)
 
     DecodeSGT(&tv, &dtv, p, raw, sizeof(raw));
 
-    int pass = ENGINE_ISSET_EVENT(p, SGT_HEADER_TOO_SMALL);
-    g_cisco_metadata_enabled = saved;
+    int pass = ENGINE_ISSET_EVENT(p, SGT_CMD_HDR_TOO_SMALL);
+    g_sgt_cmd_enabled = saved;
     SCFree(p);
     return pass;
 }
@@ -219,10 +220,10 @@ static int DecodeSGTTest02(void)
  * No SGT option present, so sgt_value stays 0. */
 static int DecodeSGTTest03(void)
 {
-    bool saved_enabled = g_cisco_metadata_enabled;
-    bool saved_eve     = g_cisco_metadata_eve_enabled;
-    g_cisco_metadata_enabled     = true;
-    g_cisco_metadata_eve_enabled = true;
+    bool saved_enabled = g_sgt_cmd_enabled;
+    bool saved_eve     = g_sgt_cmd_eve_enabled;
+    g_sgt_cmd_enabled     = true;
+    g_sgt_cmd_eve_enabled = true;
 
     uint8_t raw[] = {
         /* CMD base: version=1, length=0 (no option words) */
@@ -248,8 +249,59 @@ static int DecodeSGTTest03(void)
     DecodeSGT(&tv, &dtv, p, raw, sizeof(raw));
 
     int pass = (p->cmd_present == 1 && p->sgt_value == 0);
-    g_cisco_metadata_enabled     = saved_enabled;
-    g_cisco_metadata_eve_enabled = saved_eve;
+    g_sgt_cmd_enabled     = saved_enabled;
+    g_sgt_cmd_eve_enabled = saved_eve;
+    SCFree(p);
+    return pass;
+}
+
+/* SGT option with OptLen=7 (the maximum 3-bit value, opt_size=32).
+ *
+ * The spec requires OptLen=0 for the SGT option (4-byte total: 2-byte
+ * combined header + 2-byte SGT value).  OptLen=7 declares opt_size=32
+ * bytes but the option area is only 4 bytes — the declared size exceeds
+ * the actual area.
+ *
+ * The decoder reads sgt_value from opt+2 BEFORE advancing opt+=opt_size,
+ * so the SGT tag is extracted correctly.  opt+=32 then jumps past opt_end
+ * and the loop terminates.  The frame is accepted and cmd_present is set. */
+static int DecodeSGTTest04(void)
+{
+    bool saved_enabled = g_sgt_cmd_enabled;
+    bool saved_eve     = g_sgt_cmd_eve_enabled;
+    g_sgt_cmd_enabled     = true;
+    g_sgt_cmd_eve_enabled = true;
+
+    uint8_t raw[] = {
+        /* CMD base: version=1, length=1 (1 option word = 4 bytes) */
+        0x01, 0x01,
+        /* Option word: combined=0xE001 → OptLen=7 (top 3 bits=111), Type=SGT (0x0001) */
+        /* opt_size = 4 + 7*4 = 32; sgt_value read from opt+2 = 0x000A = 10 */
+        0xE0, 0x01, 0x00, 0x0a,
+        /* Inner EtherType: IPv4 (0x0800) */
+        0x08, 0x00,
+        /* Raw IPv4 header (20 bytes) */
+        0x45, 0x00, 0x00, 0x14,
+        0x00, 0x01, 0x00, 0x00,
+        0x40, 0x11, 0xf8, 0x68,
+        0xc0, 0xa8, 0x00, 0x01,
+        0xc0, 0xa8, 0x00, 0x02,
+    };
+
+    Packet *p = PacketGetFromAlloc();
+    if (unlikely(p == NULL))
+        return 0;
+    ThreadVars tv;
+    DecodeThreadVars dtv;
+    memset(&tv, 0, sizeof(tv));
+    memset(&dtv, 0, sizeof(dtv));
+
+    DecodeSGT(&tv, &dtv, p, raw, sizeof(raw));
+
+    int pass = (p->cmd_present == 1 && p->sgt_value == 10);
+
+    g_sgt_cmd_enabled     = saved_enabled;
+    g_sgt_cmd_eve_enabled = saved_eve;
     SCFree(p);
     return pass;
 }
@@ -261,5 +313,6 @@ void DecodeSGTRegisterTests(void)
     UtRegisterTest("DecodeSGTTest01", DecodeSGTTest01);
     UtRegisterTest("DecodeSGTTest02", DecodeSGTTest02);
     UtRegisterTest("DecodeSGTTest03", DecodeSGTTest03);
+    UtRegisterTest("DecodeSGTTest04", DecodeSGTTest04);
 #endif
 }

@@ -600,6 +600,24 @@ const struct DecodeEvents_ DEvents[] = {
             NSH_UNKNOWN_PAYLOAD,
     },
 
+    /* SGT CMD EVENTS */
+    {
+            "decoder.sgt_cmd_metadata.header_too_small",
+            SGT_CMD_HDR_TOO_SMALL,
+    },
+    {
+            "decoder.sgt_cmd_metadata.no_inner_frame",
+            SGT_CMD_NO_INNER_FRAME,
+    },
+    {
+            "decoder.sgt_cmd_metadata.unsupported_inner_protocol",
+            SGT_CMD_UNSUPPORTED_INNER_PROTOCOL,
+    },
+    {
+            "decoder.sgt_cmd_metadata.duplicate_sgt_option",
+            SGT_CMD_DUPLICATE_SGT_OPTION,
+    },
+
     /* GENERIC EVENTS */
     {
             "decoder.too_many_layers",

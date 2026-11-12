@@ -154,6 +154,12 @@ void FlowInit(ThreadVars *tv, Flow *f, const Packet *p)
     memcpy(&f->vlan_id[0], &p->vlan_id[0], sizeof(f->vlan_id));
     f->vlan_idx = p->vlan_idx;
 
+    f->sgt_ts_present  = p->cmd_present;
+    f->sgt_tc_present  = 0;
+    f->sgt_cmd_version = p->cmd_version;
+    f->sgt_toserver    = p->sgt_value;
+    f->sgt_toclient    = 0;
+
     f->thread_id[0] = (FlowThreadId)tv->id;
 
     f->livedev = p->livedev;

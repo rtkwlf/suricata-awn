@@ -6936,6 +6936,21 @@
                                             "type": "integer"
                                         }
                                     }
+                                },
+                                "sgt_cmd_metadata": {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "header_too_small": {
+                                            "type": "integer"
+                                        },
+                                        "no_inner_frame": {
+                                            "type": "integer"
+                                        },
+                                        "unsupported_inner_protocol": {
+                                            "type": "integer"
+                                        }
+                                    }
                                 }
                             }
                         },
@@ -7078,6 +7093,10 @@
                         "vxlan": {
                             "type": "integer",
                             "description": "Number of VXLAN packets decoded"
+                        },
+                        "sgt_cmd_metadata": {
+                            "type": "integer",
+                            "description": "Number of SGT CMD (EtherType 0x8909) packets decoded"
                         }
                     }
                 },
@@ -8710,6 +8729,28 @@
                     "keywords": [
                         "vlan.id"
                     ]
+                }
+            }
+        },
+        "sgt_cmd_metadata": {
+            "type": "object",
+            "description": "SGT CMD (EtherType 0x8909) header fields",
+            "additionalProperties": false,
+            "properties": {
+                "version": {
+                    "type": "integer"
+                },
+                "sgt": {
+                    "type": "integer",
+                    "description": "Security Group Tag (wire packets only: alert, packet events)"
+                },
+                "sgt_toserver": {
+                    "type": "integer",
+                    "description": "SGT of the flow initiator (app-layer transaction events)"
+                },
+                "sgt_toclient": {
+                    "type": "integer",
+                    "description": "SGT of the flow responder (app-layer transaction events)"
                 }
             }
         },

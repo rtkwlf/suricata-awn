@@ -80,6 +80,7 @@ noinst_HEADERS = \
 	decode-pppoe.h \
 	decode-raw.h \
 	decode-sctp.h \
+	decode-sgt.h \
 	decode-sll.h \
 	decode-sll2.h \
 	decode-tcp.h \
@@ -681,6 +682,7 @@ libsuricata_c_a_SOURCES = \
 	decode-pppoe.c \
 	decode-raw.c \
 	decode-sctp.c \
+	decode-sgt.c \
 	decode-sll.c \
 	decode-sll2.c \
 	decode-tcp.c \

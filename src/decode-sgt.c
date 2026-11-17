@@ -118,6 +118,10 @@ int DecodeSGT(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p,
                 ENGINE_SET_INVALID_EVENT(p, SGT_CMD_DUPLICATE_SGT_OPTION);
                 return TM_ECODE_FAILED;
             }
+            if (opt != pkt + CMD_BASE_HDR_LEN) {
+                ENGINE_SET_INVALID_EVENT(p, SGT_CMD_SGT_NOT_FIRST);
+                return TM_ECODE_FAILED;
+            }
             sgt_value = SCNtohs(*(const uint16_t *)(opt + 2));
             sgt_seen = true;
         }

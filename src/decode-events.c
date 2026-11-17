@@ -617,6 +617,10 @@ const struct DecodeEvents_ DEvents[] = {
             "decoder.sgt_cmd_metadata.duplicate_sgt_option",
             SGT_CMD_DUPLICATE_SGT_OPTION,
     },
+    {
+            "decoder.sgt_cmd_metadata.sgt_option_not_first",
+            SGT_CMD_SGT_NOT_FIRST,
+    },
 
     /* GENERIC EVENTS */
     {

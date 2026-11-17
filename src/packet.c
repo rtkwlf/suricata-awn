@@ -106,6 +106,9 @@ void PacketReinit(Packet *p)
     p->vlan_id[0] = 0;
     p->vlan_id[1] = 0;
     p->vlan_idx = 0;
+    p->cmd_present = 0;
+    p->sgt_value = 0;
+    p->cmd_version = 0;
     p->ttype = PacketTunnelNone;
     SCTIME_INIT(p->ts);
     p->datalink = 0;

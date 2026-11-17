@@ -47,6 +47,7 @@
 #include "util-time.h"
 #include "output-json.h"
 #include "output-json-netflow.h"
+#include "decode-sgt.h"
 
 #include "stream-tcp-private.h"
 
@@ -122,6 +123,19 @@ static SCJsonBuilder *CreateEveHeaderFromNetFlow(const Flow *f, int dir)
             SCJbAppendUint(js, f->vlan_id[2]);
         }
         SCJbClose(js);
+    }
+
+    /* sgt_cmd_metadata (EtherType 0x8909) — direction-correct SGT.
+     * dir is already XOR'd with FLOW_DIR_REVERSED above: 0=toserver, 1=toclient. */
+    if (DecodeSgtCmdEveEnabled()) {
+        const uint8_t  sgt_present = (dir == 0) ? f->sgt_ts_present : f->sgt_tc_present;
+        const uint16_t sgt_val     = (dir == 0) ? f->sgt_toserver   : f->sgt_toclient;
+        if (sgt_present) {
+            SCJbOpenObject(js, "sgt_cmd_metadata");
+            SCJbSetUint(js, "version", f->sgt_cmd_version);
+            SCJbSetUint(js, "sgt", sgt_val);
+            SCJbClose(js);
+        }
     }
 
     /* tuple */

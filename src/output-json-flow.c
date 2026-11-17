@@ -47,6 +47,7 @@
 #include "util-time.h"
 #include "output-json.h"
 #include "output-json-flow.h"
+#include "decode-sgt.h"
 
 #include "stream-tcp.h"
 #include "stream-tcp-private.h"
@@ -118,6 +119,17 @@ static SCJsonBuilder *CreateEveHeaderFromFlow(const Flow *f)
         if (f->vlan_idx > 2) {
             SCJbAppendUint(jb, f->vlan_id[2]);
         }
+        SCJbClose(jb);
+    }
+
+    /* sgt_cmd_metadata (EtherType 0x8909) — per-direction SGT */
+    if ((f->sgt_ts_present || f->sgt_tc_present) && DecodeSgtCmdEveEnabled()) {
+        SCJbOpenObject(jb, "sgt_cmd_metadata");
+        SCJbSetUint(jb, "version", f->sgt_cmd_version);
+        if (f->sgt_ts_present)
+            SCJbSetUint(jb, "sgt_toserver", f->sgt_toserver);
+        if (f->sgt_tc_present)
+            SCJbSetUint(jb, "sgt_toclient", f->sgt_toclient);
         SCJbClose(jb);
     }
 

@@ -46,6 +46,7 @@
 
 #include "output.h"
 #include "output-json.h"
+#include "decode-sgt.h"
 
 #include "util-byte.h"
 #include "util-print.h"
@@ -876,6 +877,53 @@ SCJsonBuilder *CreateEveHeader(const Packet *p, enum SCOutputJsonLogDirection di
             SCJbAppendUint(js, p->vlan_id[2]);
         }
         SCJbClose(js);
+    }
+
+    /* sgt_cmd_metadata (EtherType 0x8909).
+     *
+     * Alerts: single "sgt" from the triggering wire packet (cmd_present=1).
+     * Alerts fire on specific packets, so the wire SGT is the unambiguous value.
+     *
+     * Non-alert TCP events (http, tls, …): both "sgt_toserver" and "sgt_toclient"
+     * from the flow.  OutputTxLog fires the HTTP/TLS logger on the wire ACK that
+     * follows the server response, so cmd_present=1 — but the transaction spans
+     * both directions and both SGTs are relevant.  Checking the flow protocol
+     * (IPPROTO_TCP) rather than cmd_present correctly catches this case.
+     *
+     * UDP events (dns, …): single "sgt" from the wire packet (cmd_present=1).
+     * Each DNS query/response is an independent wire packet; there is no
+     * stream-reassembled pseudo-packet for UDP.
+     *
+     * Pseudo-packets (stream-end flush, cmd_present=0): fall through to the
+     * flow path as a safety net. */
+    if (DecodeSgtCmdEveEnabled()) {
+        const bool is_alert = (strcmp(event_type, "alert") == 0);
+        if (!is_alert && f != NULL && f->proto == IPPROTO_TCP &&
+                (f->sgt_ts_present || f->sgt_tc_present)) {
+            /* Non-alert TCP event: both directions from flow */
+            SCJbOpenObject(js, "sgt_cmd_metadata");
+            SCJbSetUint(js, "version", f->sgt_cmd_version);
+            if (f->sgt_ts_present)
+                SCJbSetUint(js, "sgt_toserver", f->sgt_toserver);
+            if (f->sgt_tc_present)
+                SCJbSetUint(js, "sgt_toclient", f->sgt_toclient);
+            SCJbClose(js);
+        } else if (p->cmd_present) {
+            /* Wire packet (alert, UDP event, or single-direction TCP): single sgt */
+            SCJbOpenObject(js, "sgt_cmd_metadata");
+            SCJbSetUint(js, "version", p->cmd_version);
+            SCJbSetUint(js, "sgt", p->sgt_value);
+            SCJbClose(js);
+        } else if (f != NULL && (f->sgt_ts_present || f->sgt_tc_present)) {
+            /* Pseudo-packet without cmd_present: fall back to flow */
+            SCJbOpenObject(js, "sgt_cmd_metadata");
+            SCJbSetUint(js, "version", f->sgt_cmd_version);
+            if (f->sgt_ts_present)
+                SCJbSetUint(js, "sgt_toserver", f->sgt_toserver);
+            if (f->sgt_tc_present)
+                SCJbSetUint(js, "sgt_toclient", f->sgt_toclient);
+            SCJbClose(js);
+        }
     }
 
     /* 5-tuple */

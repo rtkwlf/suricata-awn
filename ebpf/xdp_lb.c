@@ -58,6 +58,12 @@
 #define GRE_SEQ_SIZE    (4)
 #define GRE_ERSPAN_TYPE_II_HEADER_SIZE (8)
 
+/* Cisco MetaData (CMD) frames carrying TrustSec SGT tags */
+#define ETH_P_CMD              0x8909
+#define CMD_BASE_HDR_SIZE      (2)
+#define CMD_OPT_WORD_SIZE      (4)
+#define CMD_MAX_OPT_WORDS      (3)
+
 /* Hashing initval */
 #define INITVAL 15485863
 
@@ -572,6 +578,43 @@ static int INLINE filter_gre(struct xdp_md *ctx, void *data, __u64 nh_off, void 
     }
 }
 
+/* Hash on the inner IP of a CMD frame without touching the packet, so the SGT
+ * header reaches the CPU intact and Suricata's decoder can read it. */
+static int INLINE filter_sgt(struct xdp_md *ctx, void *data, __u64 nh_off, void *data_end)
+{
+    struct cmd_hdr {
+        __u8 version;
+        __u8 length;
+    };
+
+    // Base header: version and length (option word count) at nh_off.
+    struct cmd_hdr *cmd = data + nh_off;
+    if ((void *)(cmd + 1) > data_end)
+        return XDP_PASS;
+
+    // Length counts 4-byte option words; reject 0 and anything beyond the spec's 1-3.
+    __u32 opt_words = cmd->length;
+    if (opt_words < 1 || opt_words > CMD_MAX_OPT_WORDS)
+        return XDP_PASS;
+
+    // Inner EtherType sits after the 2-byte base header and the option words.
+    __u64 etype_off = nh_off + CMD_BASE_HDR_SIZE + opt_words * CMD_OPT_WORD_SIZE;
+    if (data + etype_off + sizeof(__be16) > data_end)
+        return XDP_PASS;
+
+    // The inner IP header starts right after the inner EtherType.
+    __be16 inner_etype = *(__be16 *)(data + etype_off);
+    __u64 ip_off = etype_off + sizeof(__be16);
+
+    // Hash the inner flow without modifying the packet, so Suricata still sees the CMD header.
+    if (inner_etype == __constant_htons(ETH_P_IP))
+        return hash_ipv4(ctx, data + ip_off, data_end, 0, 0);
+    if (inner_etype == __constant_htons(ETH_P_IPV6))
+        return hash_ipv6(ctx, data + ip_off, data_end, 0, 0);
+
+    return XDP_PASS;
+}
+
 static int INLINE filter_ipv4(struct xdp_md *ctx, void *data, __u64 nh_off, void *data_end, __u16 vlan0, __u16 vlan1)
 {
     struct iphdr *iph = data + nh_off;
@@ -667,6 +710,9 @@ int SEC("xdp") xdp_loadfilter(struct xdp_md *ctx)
     }
     else if (h_proto == __constant_htons(ETH_P_IPV6)) {
         return filter_ipv6(ctx, data, nh_off, data_end, vlan0, vlan1);
+    } else if (h_proto == __constant_htons(ETH_P_CMD)) {
+        stats_incr_l2(h_proto);
+        return filter_sgt(ctx, data, nh_off, data_end);
     } else {
         stats_incr_l2(h_proto);
     }

@@ -254,6 +254,280 @@ void test_gre_ecapsulating_non_ip(struct xdp_md* ctx) {
         assert((result & 0xffff) == XDP_PASS);
 }
 
+// Minimal IPv4/TCP header (20 bytes) plus 8 bytes of TCP header, 10.0.1.16:1234 -> 10.0.1.32:80.
+static const unsigned char sgt_inner_ipv4_tcp[] = {
+	0x45, 0x00, 0x00, 0x28, 0x00, 0x00, 0x40, 0x00, 0x40, 0x06, 0x00, 0x00,
+	0x0a, 0x00, 0x01, 0x10, 0x0a, 0x00, 0x01, 0x20,
+	0x04, 0xd2, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x50, 0x10, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+// Builds Ethernet + CMD (version 1, opt_words option words) + inner IPv4/TCP.
+// The first option word carries an SGT option (type 1) with value sgt; any further option
+// words are zero-filled. Returns the frame length.
+static size_t sgt_make_frame(unsigned char *buf, unsigned int sgt, unsigned char opt_words)
+{
+	size_t off = 0;
+	const unsigned char eth[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+	                              0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+	                              0x89, 0x09 };
+	memcpy(buf + off, eth, sizeof(eth));
+	off += sizeof(eth);
+
+	buf[off++] = 0x01;
+	buf[off++] = opt_words;
+	for (int i = 0; i < opt_words * 4; i++)
+		buf[off++] = 0x00;
+	if (opt_words > 0) {
+		buf[off - opt_words * 4]     = 0x00;
+		buf[off - opt_words * 4 + 1] = 0x01;
+		buf[off - opt_words * 4 + 2] = (sgt >> 8) & 0xff;
+		buf[off - opt_words * 4 + 3] = sgt & 0xff;
+	}
+
+	buf[off++] = 0x08;
+	buf[off++] = 0x00;
+	memcpy(buf + off, sgt_inner_ipv4_tcp, sizeof(sgt_inner_ipv4_tcp));
+	off += sizeof(sgt_inner_ipv4_tcp);
+	return off;
+}
+
+// Same inner IPv4/TCP packet as sgt_make_frame, but with a plain IPv4 EtherType and no CMD header.
+static size_t sgt_make_plain_frame(unsigned char *buf)
+{
+	const unsigned char eth[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+	                              0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+	                              0x08, 0x00 };
+	memcpy(buf, eth, sizeof(eth));
+	memcpy(buf + sizeof(eth), sgt_inner_ipv4_tcp, sizeof(sgt_inner_ipv4_tcp));
+	return sizeof(eth) + sizeof(sgt_inner_ipv4_tcp);
+}
+
+// Points the fake xdp_md at buf so xdp_loadfilter sees a packet of length len.
+static void sgt_set_ctx(struct xdp_md *ctx, unsigned char *buf, size_t len)
+{
+	ctx->data = (uint32_t)buf;
+	ctx->data_end = (uint32_t)buf + len;
+}
+
+// SGT-wrapped IPv4 should hash on the inner 5-tuple, so the SGT value must not change the
+// redirect target. Changing the inner source address must change it.
+void test_sgt_balances_on_inner_tuple(struct xdp_md* ctx) {
+	unsigned char plain[128], sgt_a[128], sgt_b[128];
+	size_t lp = sgt_make_plain_frame(plain);
+	size_t la = sgt_make_frame(sgt_a, 18, 1);
+	size_t lb = sgt_make_frame(sgt_b, 48, 1);
+
+	sgt_set_ctx(ctx, plain, lp);
+	int rp = xdp_loadfilter(ctx);
+	assert((rp & 0xffff) == XDP_REDIRECT);
+
+	sgt_set_ctx(ctx, sgt_a, la);
+	int ra = xdp_loadfilter(ctx);
+	assert(ra == rp);
+
+	sgt_set_ctx(ctx, sgt_b, lb);
+	int rb = xdp_loadfilter(ctx);
+	assert(rb == rp);
+
+	/* inner IPv4 starts at 22 (eth 14 + CMD 2 + option 4 + inner EtherType 2); saddr at +12 */
+	sgt_b[22 + 12 + 3] = 0x99;
+	int rc = xdp_loadfilter(ctx);
+	assert((rc & 0xffff) == XDP_REDIRECT);
+	assert(rc != rp);
+}
+
+// The CMD header has to reach Suricata intact, so the filter must not adjust the packet head
+// or rewrite any bytes. Checks the context pointers and the frame contents after the call.
+void test_sgt_frame_not_modified(struct xdp_md* ctx) {
+	unsigned char frame[128], orig[128];
+	size_t len = sgt_make_frame(frame, 18, 1);
+	memcpy(orig, frame, len);
+
+	sgt_set_ctx(ctx, frame, len);
+	int result = xdp_loadfilter(ctx);
+	assert((result & 0xffff) == XDP_REDIRECT);
+	assert(ctx->data == (uint32_t)frame);
+	assert(ctx->data_end == (uint32_t)frame + len);
+	assert(memcmp(frame, orig, len) == 0);
+}
+
+// Option word counts outside 1-3 (0 and 4 here) are not valid CMD frames, so the filter must
+// pass them through without hashing.
+void test_sgt_out_of_range_length(struct xdp_md* ctx) {
+	unsigned char frame[128];
+
+	size_t len = sgt_make_frame(frame, 18, 0);
+	sgt_set_ctx(ctx, frame, len);
+	assert((xdp_loadfilter(ctx) & 0xffff) == XDP_PASS);
+
+	len = sgt_make_frame(frame, 18, 4);
+	sgt_set_ctx(ctx, frame, len);
+	assert((xdp_loadfilter(ctx) & 0xffff) == XDP_PASS);
+}
+
+// A frame that ends before the inner EtherType must be passed through rather than read past
+// the end of the packet.
+void test_sgt_truncated_frame(struct xdp_md* ctx) {
+	unsigned char frame[128];
+	sgt_make_frame(frame, 18, 1);
+	// The packet ends before the inner EtherType at offset 20.
+	sgt_set_ctx(ctx, frame, 20);
+	assert((xdp_loadfilter(ctx) & 0xffff) == XDP_PASS);
+}
+
+// A CMD frame whose inner EtherType is not IPv4 or IPv6 (here ARP) must be passed through.
+void test_sgt_non_ip_inner(struct xdp_md* ctx) {
+	unsigned char frame[128];
+	size_t len = sgt_make_frame(frame, 18, 1);
+	frame[20] = 0x08;
+	frame[21] = 0x06; // ARP EtherType
+
+	sgt_set_ctx(ctx, frame, len);
+	assert((xdp_loadfilter(ctx) & 0xffff) == XDP_PASS);
+}
+
+// Inner IPv6/TCP packet: 2001:db8::1 -> 2001:db8::2, ports 1234 -> 80. 60 bytes.
+static const unsigned char sgt_inner_ipv6_tcp[] = {
+	0x60, 0x00, 0x00, 0x00, 0x00, 0x14, 0x06, 0x40,
+	0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+	0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+	0x04, 0xd2, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x50, 0x10, 0x20, 0x00,
+	0x00, 0x00, 0x00, 0x00,
+};
+
+// Ethernet + CMD (one option word, SGT = sgt) + inner IPv6/TCP. Returns the frame length.
+static size_t sgt_make_ipv6_frame(unsigned char *buf, unsigned int sgt)
+{
+	const unsigned char eth[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+	                              0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+	                              0x89, 0x09 };
+	size_t off = 0;
+	memcpy(buf + off, eth, sizeof(eth));
+	off += sizeof(eth);
+
+	buf[off++] = 0x01;
+	buf[off++] = 0x01;
+	buf[off++] = 0x00;
+	buf[off++] = 0x01;
+	buf[off++] = (sgt >> 8) & 0xff;
+	buf[off++] = sgt & 0xff;
+	buf[off++] = 0x86;
+	buf[off++] = 0xdd;
+
+	memcpy(buf + off, sgt_inner_ipv6_tcp, sizeof(sgt_inner_ipv6_tcp));
+	off += sizeof(sgt_inner_ipv6_tcp);
+	return off;
+}
+
+// Same inner IPv6/TCP packet with a plain IPv6 EtherType and no CMD header.
+static size_t sgt_make_plain_ipv6_frame(unsigned char *buf)
+{
+	const unsigned char eth[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+	                              0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+	                              0x86, 0xdd };
+	memcpy(buf, eth, sizeof(eth));
+	memcpy(buf + sizeof(eth), sgt_inner_ipv6_tcp, sizeof(sgt_inner_ipv6_tcp));
+	return sizeof(eth) + sizeof(sgt_inner_ipv6_tcp);
+}
+
+// Swaps source and destination addresses and ports of the inner IPv4/TCP packet in a CMD frame.
+static void sgt_reverse_ipv4(unsigned char *frame)
+{
+	unsigned char *ip  = frame + 22;
+	unsigned char *tcp = ip + 20;
+	unsigned char tmp[4];
+
+	memcpy(tmp, ip + 12, 4);
+	memcpy(ip + 12, ip + 16, 4);
+	memcpy(ip + 16, tmp, 4);
+
+	memcpy(tmp, tcp, 2);
+	memcpy(tcp, tcp + 2, 2);
+	memcpy(tcp + 2, tmp, 2);
+}
+
+// Swaps source and destination addresses and ports of the inner IPv6/TCP packet in a CMD frame.
+static void sgt_reverse_ipv6(unsigned char *frame)
+{
+	unsigned char *ip6 = frame + 22;
+	unsigned char *tcp = ip6 + 40;
+	unsigned char tmp[16];
+
+	memcpy(tmp, ip6 + 8, 16);
+	memcpy(ip6 + 8, ip6 + 24, 16);
+	memcpy(ip6 + 24, tmp, 16);
+
+	unsigned char port[2];
+	memcpy(port, tcp, 2);
+	memcpy(tcp, tcp + 2, 2);
+	memcpy(tcp + 2, port, 2);
+}
+
+// SGT-wrapped IPv6 should hash on the inner 5-tuple, like the plain IPv6 frame.
+void test_sgt_ipv6_inner_balances(struct xdp_md* ctx) {
+	unsigned char plain[128], sgt_a[128], sgt_b[128];
+	size_t lp = sgt_make_plain_ipv6_frame(plain);
+	size_t la = sgt_make_ipv6_frame(sgt_a, 18);
+	size_t lb = sgt_make_ipv6_frame(sgt_b, 48);
+
+	sgt_set_ctx(ctx, plain, lp);
+	int rp = xdp_loadfilter(ctx);
+	assert((rp & 0xffff) == XDP_REDIRECT);
+
+	sgt_set_ctx(ctx, sgt_a, la);
+	assert(xdp_loadfilter(ctx) == rp);
+
+	sgt_set_ctx(ctx, sgt_b, lb);
+	assert(xdp_loadfilter(ctx) == rp);
+
+	// inner IPv6 starts at 22; source address at +8, last byte at +23 (offset 45)
+	sgt_b[22 + 8 + 15] = 0x99;
+	int rc = xdp_loadfilter(ctx);
+	assert((rc & 0xffff) == XDP_REDIRECT);
+	assert(rc != rp);
+}
+
+// Reply packets (addresses and ports swapped, reply SGT) must land on the same CPU as the
+// request, for IPv4 inner payloads.
+void test_sgt_reverse_direction_ipv4(struct xdp_md* ctx) {
+	unsigned char fwd[128], rev[128];
+	size_t lf = sgt_make_frame(fwd, 18, 1);
+	memcpy(rev, fwd, lf);
+	sgt_reverse_ipv4(rev);
+	// reply carries the server's SGT
+	rev[14 + 2 + 2] = 0x00;
+	rev[14 + 2 + 3] = 0x30;
+
+	sgt_set_ctx(ctx, fwd, lf);
+	int rf = xdp_loadfilter(ctx);
+	assert((rf & 0xffff) == XDP_REDIRECT);
+
+	sgt_set_ctx(ctx, rev, lf);
+	assert(xdp_loadfilter(ctx) == rf);
+}
+
+// Reply packets must land on the same CPU as the request, for IPv6 inner payloads.
+void test_sgt_reverse_direction_ipv6(struct xdp_md* ctx) {
+	unsigned char fwd[128], rev[128];
+	size_t lf = sgt_make_ipv6_frame(fwd, 18);
+	memcpy(rev, fwd, lf);
+	sgt_reverse_ipv6(rev);
+	// reply carries the server's SGT
+	rev[14 + 2 + 2] = 0x00;
+	rev[14 + 2 + 3] = 0x30;
+
+	sgt_set_ctx(ctx, fwd, lf);
+	int rf = xdp_loadfilter(ctx);
+	assert((rf & 0xffff) == XDP_REDIRECT);
+
+	sgt_set_ctx(ctx, rev, lf);
+	assert(xdp_loadfilter(ctx) == rf);
+}
+
 int main() {
 	setup_mocks();
 	bpf_map_lookup_elem = bpf_map_lookup_elem_lb_mock;
@@ -269,6 +543,14 @@ int main() {
 	TEST(non_ip_packet);
 	TEST(IEEE8021ah_packet);
 	TEST(gre_ecapsulating_non_ip);
+	TEST(sgt_balances_on_inner_tuple);
+	TEST(sgt_frame_not_modified);
+	TEST(sgt_out_of_range_length);
+	TEST(sgt_truncated_frame);
+	TEST(sgt_non_ip_inner);
+	TEST(sgt_ipv6_inner_balances);
+	TEST(sgt_reverse_direction_ipv4);
+	TEST(sgt_reverse_direction_ipv6);
 
 	return 0;
 }

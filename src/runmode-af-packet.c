@@ -569,10 +569,10 @@ static void *ParseAFPConfig(const char *iface)
                 if (ret != 0) {
                     SCLogWarning("%s: failed to set up XDP", iface);
                 } else {
-                    /* Try to get the xdp-cpu-redirect key */
-                    const char *cpuset;
-                    if (SCConfGetChildValueWithDefault(
-                                if_root, if_default, "xdp-cpu-redirect", &cpuset) == 1) {
+                    /* Try to get the xdp-cpu-redirect key. It is a list, so the node has no
+                     * scalar value of its own and a value lookup never finds it. */
+                    if (SCConfGetChildWithDefault(if_root, if_default, "xdp-cpu-redirect") !=
+                            NULL) {
                         SCLogConfig("%s: Setting up CPU map XDP", iface);
                         SCConfNode *node =
                                 SCConfGetChildWithDefault(if_root, if_default, "xdp-cpu-redirect");

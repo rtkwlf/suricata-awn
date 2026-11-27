@@ -86,7 +86,16 @@ int EBPFCheckBypassedFlowCreate(ThreadVars *th_v, struct timespec *curtime, void
 
 void EBPFRegisterExtension(void);
 
-void EBPFBuildCPUSet(SCConfNode *node, char *iface);
+#define EBPF_CPUMAP_MAX_CPUS 128
+
+typedef struct EBPFCPUSet_ {
+    bool cpu[EBPF_CPUMAP_MAX_CPUS];
+    uint32_t count;
+} EBPFCPUSet;
+
+int EBPFParseCPURedirect(SCConfNode *node, EBPFCPUSet *set);
+void EBPFCPUSetRegisterTests(void);
+int EBPFBuildCPUSet(const EBPFCPUSet *set, const char *iface);
 
 int EBPFSetPeerIface(const char *iface, const char *out_iface);
 

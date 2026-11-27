@@ -1109,66 +1109,109 @@ void EBPFRegisterExtension(void)
 
 #ifdef HAVE_PACKET_XDP
 
-static uint32_t g_redirect_iface_cpu_counter = 0;
-
-static int EBPFAddCPUToMap(const char *iface, uint32_t i)
+static int EBPFCPUNumber(const char *s, size_t len, uint32_t limit, uint32_t *out)
 {
-    int cpumap = EBPFGetMapFDByName(iface, "cpu_map");
-    uint32_t queue_size = 4096;
-    int ret;
+    uint32_t v = 0;
+    if (len == 0)
+        return -1;
+    for (size_t i = 0; i < len; i++) {
+        if (s[i] < '0' || s[i] > '9')
+            return -1;
+        v = v * 10 + (uint32_t)(s[i] - '0');
+        if (v >= limit)
+            return -1;
+    }
+    *out = v;
+    return 0;
+}
 
-    if (cpumap < 0) {
-        SCLogError("Can't find cpu_map");
-        return -1;
-    }
-    ret = bpf_map_update_elem(cpumap, &i, &queue_size, 0);
-    if (ret) {
-        SCLogError("Create CPU entry failed (err:%d)", ret);
-        return -1;
-    }
-    int cpus_available = EBPFGetMapFDByName(iface, "cpus_available");
-    if (cpus_available < 0) {
-        SCLogError("Can't find cpus_available map");
-        return -1;
-    }
+static int EBPFCPUSetAddToken(const char *tok, uint32_t max_cpus, EBPFCPUSet *set)
+{
+    uint32_t a, b;
 
-    ret = bpf_map_update_elem(cpus_available, &g_redirect_iface_cpu_counter, &i, 0);
-    if (ret) {
-        SCLogError("Create CPU entry failed (err:%d)", ret);
+    if (strcmp(tok, "all") == 0) {
+        a = 0;
+        b = max_cpus - 1;
+    } else {
+        const char *sep = strchr(tok, '-');
+        if (sep == NULL) {
+            if (EBPFCPUNumber(tok, strlen(tok), max_cpus, &a) < 0)
+                return -1;
+            b = a;
+        } else {
+            if (EBPFCPUNumber(tok, (size_t)(sep - tok), max_cpus, &a) < 0 ||
+                    EBPFCPUNumber(sep + 1, strlen(sep + 1), max_cpus, &b) < 0 || a > b)
+                return -1;
+        }
+    }
+    for (uint32_t cpu = a; cpu <= b; cpu++) {
+        if (!set->cpu[cpu]) {
+            set->cpu[cpu] = true;
+            set->count++;
+        }
+    }
+    return 0;
+}
+
+int EBPFParseCPURedirect(SCConfNode *node, EBPFCPUSet *set)
+{
+    const uint32_t max_cpus = MIN(UtilCpuGetNumProcessorsOnline(), EBPF_CPUMAP_MAX_CPUS);
+    SCConfNode *item;
+
+    memset(set, 0, sizeof(*set));
+    if (TAILQ_EMPTY(&node->head)) {
+        SCLogError("xdp-cpu-redirect must be a non-empty list, e.g. [\"0-7\"]");
+        return -1;
+    }
+    TAILQ_FOREACH (item, &node->head, next) {
+        if (item->val == NULL) {
+            SCLogError("xdp-cpu-redirect has an empty entry");
+            return -1;
+        }
+        if (EBPFCPUSetAddToken(item->val, max_cpus, set) < 0) {
+            SCLogError("xdp-cpu-redirect: invalid CPU \"%s\" (expected N, N-M or all; "
+                       "valid CPUs 0-%u)",
+                    item->val, max_cpus - 1);
+            return -1;
+        }
+    }
+    if (set->count == 0) {
+        SCLogError("xdp-cpu-redirect selects no CPU");
         return -1;
     }
     return 0;
 }
 
-static void EBPFRedirectMapAddCPU(int i, void *data)
+int EBPFBuildCPUSet(const EBPFCPUSet *set, const char *iface)
 {
-    if (EBPFAddCPUToMap(data, i) < 0) {
-        SCLogError("Unable to add CPU %d to set", i);
-    } else {
-        g_redirect_iface_cpu_counter++;
-    }
-}
+    uint32_t key0 = 0, count = 0;
+    int count_fd = EBPFGetMapFDByName(iface, "cpus_count");
+    int cpumap_fd = EBPFGetMapFDByName(iface, "cpu_map");
+    int avail_fd = EBPFGetMapFDByName(iface, "cpus_available");
 
-void EBPFBuildCPUSet(SCConfNode *node, char *iface)
-{
-    uint32_t key0 = 0;
-    int mapfd = EBPFGetMapFDByName(iface, "cpus_count");
-    if (mapfd < 0) {
-        SCLogError("Unable to find 'cpus_count' map");
-        return;
+    if (count_fd < 0 || cpumap_fd < 0 || avail_fd < 0) {
+        SCLogError("%s: XDP CPU redirect maps not found", iface);
+        return -1;
     }
-    g_redirect_iface_cpu_counter = 0;
-    if (node == NULL) {
-        bpf_map_update_elem(mapfd, &key0, &g_redirect_iface_cpu_counter,
-                        BPF_ANY);
-        return;
+    /* Clear the count first so the program never sees a partly written table. */
+    if (bpf_map_update_elem(count_fd, &key0, &count, BPF_ANY) != 0)
+        return -1;
+    if (set == NULL)
+        return 0;
+
+    for (uint32_t cpu = 0; cpu < EBPF_CPUMAP_MAX_CPUS; cpu++) {
+        uint32_t qsize = 4096;
+        if (!set->cpu[cpu])
+            continue;
+        if (bpf_map_update_elem(cpumap_fd, &cpu, &qsize, 0) != 0 ||
+                bpf_map_update_elem(avail_fd, &count, &cpu, 0) != 0) {
+            SCLogError("%s: failed to add CPU %u to XDP redirect map", iface, cpu);
+            return -1;
+        }
+        count++;
     }
-    if (BuildCpusetWithCallback("xdp-cpu-redirect", node, EBPFRedirectMapAddCPU, iface) < 0) {
-        SCLogWarning("Failed to parse XDP CPU redirect configuration");
-        return;
-    }
-    bpf_map_update_elem(mapfd, &key0, &g_redirect_iface_cpu_counter,
-                        BPF_ANY);
+    /* Publish the count last, once the table is complete. */
+    return bpf_map_update_elem(count_fd, &key0, &count, BPF_ANY) == 0 ? 0 : -1;
 }
 
 /**
@@ -1253,6 +1296,131 @@ int EBPFUpdateFlow(Flow *f, Packet *p, void *data)
     FlowSetStorageById(f, g_flow_storage_id, nifl);
     return 1;
 }
+
+
+#ifdef UNITTESTS
+#include "conf-yaml-loader.h"
+#include "util-unittest.h"
+
+static uint32_t EBPFCPUSetTestOnline(void)
+{
+    return MIN(UtilCpuGetNumProcessorsOnline(), EBPF_CPUMAP_MAX_CPUS);
+}
+
+/* Loads xdp-cpu-redirect with the given YAML value through the real config loader. */
+static int EBPFCPUSetTestParse(const char *value, EBPFCPUSet *set)
+{
+    char yaml[256];
+    snprintf(yaml, sizeof(yaml),
+            "af-packet:\n  - interface: lan0\n    xdp-cpu-redirect: %s\n", value);
+    SCConfCreateContextBackup();
+    SCConfInit();
+    SCConfYamlLoadString(yaml, strlen(yaml));
+    SCConfNode *node = SCConfGetNode("af-packet.0.xdp-cpu-redirect");
+    int ret = node == NULL ? -2 : EBPFParseCPURedirect(node, set);
+    SCConfDeInit();
+    SCConfRestoreContextBackup();
+    return ret;
+}
+
+static int EBPFCPUSetTest01(void)
+{
+    EBPFCPUSet set;
+    FAIL_IF_NOT(EBPFCPUSetTestParse("\"0-3\"", &set) < 0);
+    FAIL_IF_NOT(EBPFCPUSetTestParse("5", &set) < 0);
+    return 1;
+}
+
+static int EBPFCPUSetTest02(void)
+{
+    EBPFCPUSet set;
+    if (EBPFCPUSetTestOnline() < 4)
+        return 1;
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[ \"0-1\", 3 ]", &set) == 0);
+    FAIL_IF_NOT(set.count == 3);
+    FAIL_IF_NOT(set.cpu[0] && set.cpu[1] && set.cpu[3]);
+    FAIL_IF_NOT(!set.cpu[2]);
+    return 1;
+}
+
+static int EBPFCPUSetTest03(void)
+{
+    EBPFCPUSet set;
+    if (EBPFCPUSetTestOnline() < 4)
+        return 1;
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[ \"0-3\", 2 ]", &set) == 0);
+    FAIL_IF_NOT(set.count == 4);
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[ \"0-3\", \"2-3\" ]", &set) == 0);
+    FAIL_IF_NOT(set.count == 4);
+    return 1;
+}
+
+static int EBPFCPUSetTest04(void)
+{
+    EBPFCPUSet set;
+    uint32_t online = EBPFCPUSetTestOnline();
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[ \"all\" ]", &set) == 0);
+    FAIL_IF_NOT(set.count == online);
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[ \"all\", 3 ]", &set) == 0);
+    FAIL_IF_NOT(set.count == online);
+    return 1;
+}
+
+static int EBPFCPUSetTest05(void)
+{
+    static const char *const bad[] = {
+        "\"0-3 2\"", "\"0,1,2\"", "\" 3\"", "\"+3\"", "\"1 - 3\"",
+        "\"1-2-3\"", "\"-3\"", "\"3-\"", "\"abc\"", "\"3-1\"", "\"\"",
+    };
+    char value[64];
+    EBPFCPUSet set;
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        snprintf(value, sizeof(value), "[ %s ]", bad[i]);
+        FAIL_IF_NOT(EBPFCPUSetTestParse(value, &set) < 0);
+    }
+    return 1;
+}
+
+static int EBPFCPUSetTest06(void)
+{
+    EBPFCPUSet set;
+    char value[64];
+    uint32_t online = EBPFCPUSetTestOnline();
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[ \"128\" ]", &set) < 0);
+    if (online < EBPF_CPUMAP_MAX_CPUS) {
+        snprintf(value, sizeof(value), "[ \"%u\" ]", (unsigned int)online);
+        FAIL_IF_NOT(EBPFCPUSetTestParse(value, &set) < 0);
+        snprintf(value, sizeof(value), "[ \"0-%u\" ]", (unsigned int)online);
+        FAIL_IF_NOT(EBPFCPUSetTestParse(value, &set) < 0);
+    }
+    return 1;
+}
+
+static int EBPFCPUSetTest07(void)
+{
+    EBPFCPUSet set;
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[]", &set) < 0);
+    FAIL_IF_NOT(EBPFCPUSetTestParse("~", &set) < 0);
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[ ~ ]", &set) < 0);
+    FAIL_IF_NOT(EBPFCPUSetTestParse("[ \"\" ]", &set) < 0);
+    return 1;
+}
+
+void EBPFCPUSetRegisterTests(void)
+{
+    UtRegisterTest("EBPFCPUSetTest01", EBPFCPUSetTest01);
+    UtRegisterTest("EBPFCPUSetTest02", EBPFCPUSetTest02);
+    UtRegisterTest("EBPFCPUSetTest03", EBPFCPUSetTest03);
+    UtRegisterTest("EBPFCPUSetTest04", EBPFCPUSetTest04);
+    UtRegisterTest("EBPFCPUSetTest05", EBPFCPUSetTest05);
+    UtRegisterTest("EBPFCPUSetTest06", EBPFCPUSetTest06);
+    UtRegisterTest("EBPFCPUSetTest07", EBPFCPUSetTest07);
+}
+#else
+void EBPFCPUSetRegisterTests(void)
+{
+}
+#endif /* UNITTESTS */
 
 #endif /* HAVE_PACKET_XDP */
 

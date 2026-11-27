@@ -554,6 +554,14 @@ static void *ParseAFPConfig(const char *iface)
     /* One shot loading of the eBPF file */
     if (aconf->xdp_filter_file) {
 #ifdef HAVE_PACKET_XDP
+        EBPFCPUSet cpuset;
+        bool have_cpus = false;
+        SCConfNode *redirect = SCConfGetChildWithDefault(if_root, if_default, "xdp-cpu-redirect");
+        if (redirect != NULL) {
+            if (EBPFParseCPURedirect(redirect, &cpuset) < 0)
+                FatalError("%s: invalid xdp-cpu-redirect configuration", iface);
+            have_cpus = true;
+        }
         int ret = EBPFLoadFile(aconf->iface, aconf->xdp_filter_file, "xdp",
                                &aconf->xdp_filter_fd,
                                &aconf->ebpf_t_config);
@@ -569,22 +577,10 @@ static void *ParseAFPConfig(const char *iface)
                 if (ret != 0) {
                     SCLogWarning("%s: failed to set up XDP", iface);
                 } else {
-                    /* Try to get the xdp-cpu-redirect key. It is a list, so the node has no
-                     * scalar value of its own and a value lookup never finds it. */
-                    if (SCConfGetChildWithDefault(if_root, if_default, "xdp-cpu-redirect") !=
-                            NULL) {
+                    if (have_cpus)
                         SCLogConfig("%s: Setting up CPU map XDP", iface);
-                        SCConfNode *node =
-                                SCConfGetChildWithDefault(if_root, if_default, "xdp-cpu-redirect");
-                        if (node == NULL) {
-                            SCLogError("Previously found node has disappeared");
-                        } else {
-                            EBPFBuildCPUSet(node, aconf->iface);
-                        }
-                    } else {
-                        /* It will just set CPU count to 0 */
-                        EBPFBuildCPUSet(NULL, aconf->iface);
-                    }
+                    if (EBPFBuildCPUSet(have_cpus ? &cpuset : NULL, aconf->iface) < 0)
+                        FatalError("%s: failed to program XDP CPU redirect map", iface);
                 }
                 /* we have a peer and we use bypass so we can set up XDP iface redirect */
                 if (aconf->out_iface) {

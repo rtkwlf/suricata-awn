@@ -23,6 +23,9 @@
 #include "suricata-common.h"
 #include "runmode-unittests.h"
 #include "util-unittest.h"
+#ifdef HAVE_PACKET_XDP
+#include "util-ebpf.h"
+#endif
 
 #include "util-debug.h"
 #ifdef UNITTESTS
@@ -200,6 +203,9 @@ static void RegisterUnittests(void)
     MagicRegisterTests();
     UtilMiscRegisterTests();
     ThreadingAffinityRegisterTests();
+#ifdef HAVE_PACKET_XDP
+    EBPFCPUSetRegisterTests();
+#endif
     DetectAddressTests();
     DetectProtoTests();
     DetectPortTests();
